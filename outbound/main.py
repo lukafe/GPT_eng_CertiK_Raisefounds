@@ -1,12 +1,25 @@
 """Orquestrador diário: fetch_raises → enrich_contacts → push_to_apollo → sync_status.
 
 --dry-run executa tudo menos as escritas no Apollo.
-Etapas são implementadas nas fases 2–6; aqui fica só o esqueleto.
 """
 
 import argparse
 
 from common import log
+
+
+def run_step(name: str, fn) -> None:
+    """Roda uma etapa; erro é logado em log.txt e runs, sem derrubar as demais."""
+    try:
+        fn()
+    except Exception as e:  # noqa: BLE001
+        log(name, f"ERRO: {e}")
+        try:
+            import db
+
+            db.log_run(name, False, str(e))
+        except Exception:
+            pass
 
 
 def main() -> None:
@@ -15,10 +28,17 @@ def main() -> None:
     args = parser.parse_args()
 
     log("main", f"início (dry_run={args.dry_run})")
-    # Fase 2: llama.fetch_raises()
+
+    import llama
+
+    run_step("fetch_raises", llama.fetch_raises)
+
     # Fase 3: hunter.enrich_contacts()
     # Fase 5: apollo.push_to_apollo() (pulado em --dry-run) e apollo.sync_status()
-    log("main", "esqueleto — etapas serão plugadas nas fases 2 a 6")
+    if not args.dry_run:
+        pass
+
+    log("main", "fim")
 
 
 if __name__ == "__main__":

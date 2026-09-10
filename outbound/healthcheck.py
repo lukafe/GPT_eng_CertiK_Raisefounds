@@ -1,6 +1,6 @@
 """Roda antes do main.py no cron: falha (exit != 0) se qualquer API estiver fora.
 
-Implementação completa na fase 7; por ora só o check do DefiLlama (sem credencial).
+Checks de Hunter e Apollo entram nas fases 3 e 5.
 """
 
 import sys
@@ -12,16 +12,28 @@ def check_defillama() -> bool:
     try:
         resp = http_call("GET", "https://api.llama.fi/raises", step="healthcheck")
         ok = resp.status_code == 200
-    except Exception as e:
+        log("healthcheck", f"DefiLlama status={resp.status_code}")
+        return ok
+    except Exception as e:  # noqa: BLE001
         log("healthcheck", f"DefiLlama inacessível: {e}")
         return False
-    log("healthcheck", f"DefiLlama status={resp.status_code}")
-    return ok
+
+
+def check_supabase() -> bool:
+    try:
+        import db
+
+        db.client().table("runs").select("id").limit(1).execute()
+        log("healthcheck", "Supabase ok")
+        return True
+    except Exception as e:  # noqa: BLE001
+        log("healthcheck", f"Supabase inacessível: {e}")
+        return False
 
 
 def main() -> None:
-    checks = [("defillama", check_defillama)]
-    # Fase 1/3/5/7: supabase, hunter (/account), apollo (usage_stats)
+    checks = [("defillama", check_defillama), ("supabase", check_supabase)]
+    # Fase 3: hunter (/account); fase 5: apollo (usage_stats)
     failed = [name for name, fn in checks if not fn()]
     if failed:
         log("healthcheck", f"FALHA: {', '.join(failed)} — main.py não roda hoje")
