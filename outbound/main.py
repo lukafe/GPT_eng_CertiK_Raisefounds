@@ -29,15 +29,18 @@ def main() -> None:
 
     log("main", f"início (dry_run={args.dry_run})")
 
+    import apollo
     import hunter
     import llama
 
     run_step("fetch_raises", llama.fetch_raises)
     run_step("enrich_contacts", hunter.enrich_contacts)
 
-    # Fase 5: apollo.push_to_apollo() (pulado em --dry-run) e apollo.sync_status()
-    if not args.dry_run:
-        pass
+    if args.dry_run:
+        log("main", "dry-run: push_to_apollo e sync_status pulados")
+    else:
+        run_step("push_to_apollo", apollo.push_to_apollo)
+        run_step("sync_status", apollo.sync_status)
 
     log("main", "fim")
 

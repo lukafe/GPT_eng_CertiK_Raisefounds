@@ -43,13 +43,25 @@ def check_hunter() -> bool:
         return False
 
 
+def check_apollo() -> bool:
+    try:
+        from apollo import usage_stats
+
+        usage_stats()
+        log("healthcheck", "Apollo ok")
+        return True
+    except Exception as e:  # noqa: BLE001
+        log("healthcheck", f"Apollo inacessível: {e}")
+        return False
+
+
 def main() -> None:
     checks = [
         ("defillama", check_defillama),
         ("supabase", check_supabase),
         ("hunter", check_hunter),
+        ("apollo", check_apollo),
     ]
-    # Fase 5: apollo (usage_stats)
     failed = [name for name, fn in checks if not fn()]
     if failed:
         log("healthcheck", f"FALHA: {', '.join(failed)} — main.py não roda hoje")
