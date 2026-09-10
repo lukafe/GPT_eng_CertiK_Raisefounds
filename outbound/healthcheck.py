@@ -31,9 +31,25 @@ def check_supabase() -> bool:
         return False
 
 
+def check_hunter() -> bool:
+    try:
+        from hunter import searches_available
+
+        available = searches_available()
+        log("healthcheck", f"Hunter ok ({available} buscas restantes)")
+        return True
+    except Exception as e:  # noqa: BLE001
+        log("healthcheck", f"Hunter inacessível: {e}")
+        return False
+
+
 def main() -> None:
-    checks = [("defillama", check_defillama), ("supabase", check_supabase)]
-    # Fase 3: hunter (/account); fase 5: apollo (usage_stats)
+    checks = [
+        ("defillama", check_defillama),
+        ("supabase", check_supabase),
+        ("hunter", check_hunter),
+    ]
+    # Fase 5: apollo (usage_stats)
     failed = [name for name, fn in checks if not fn()]
     if failed:
         log("healthcheck", f"FALHA: {', '.join(failed)} — main.py não roda hoje")
