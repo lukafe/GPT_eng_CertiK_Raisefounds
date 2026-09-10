@@ -8,7 +8,8 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-load_dotenv()
+# Caminho explícito: o .env é achado mesmo quando o cron chama de outro diretório.
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 LOG_FILE = Path(__file__).resolve().parent / "log.txt"
 

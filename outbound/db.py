@@ -27,12 +27,15 @@ def companies_count() -> int:
     return resp.count or 0
 
 
+def company_exists(llama_id: str) -> bool:
+    return bool(
+        client().table("companies").select("id").eq("llama_id", llama_id).execute().data
+    )
+
+
 def insert_company_if_new(row: dict) -> bool:
     """Upsert por llama_id que só cria (nunca atualiza). Retorna True se criou."""
-    existing = (
-        client().table("companies").select("id").eq("llama_id", row["llama_id"]).execute()
-    )
-    if existing.data:
+    if company_exists(row["llama_id"]):
         return False
     client().table("companies").insert(row).execute()
     return True
@@ -68,15 +71,14 @@ def insert_contact_if_new(row: dict) -> bool:
     return True
 
 
-def ready_contacts(limit: int):
-    """Contatos 'ready' com a empresa junto, empresa mais recente primeiro."""
+def ready_contacts():
+    """Todos os contatos 'ready' com a empresa junto (o chamador ordena por
+    empresa mais recente e aplica o teto MAX_PER_DAY)."""
     return (
         client()
         .table("contacts")
         .select("*, companies(name, domain, time_zone, raise_date)")
         .eq("status", "ready")
-        .order("created_at", desc=False)
-        .limit(limit)
         .execute()
         .data
     )

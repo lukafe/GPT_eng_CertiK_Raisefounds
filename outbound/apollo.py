@@ -127,8 +127,9 @@ def push_to_apollo() -> dict:
     seq_id = env("APOLLO_SEQ_ID")
     mailbox_id = resolve_mailbox_id()
 
-    contacts = db.ready_contacts(limit=max_per_day)
-    # Empresa mais recente primeiro (raise_date da empresa embutida no join)
+    contacts = db.ready_contacts()
+    # Empresa mais recente primeiro; o teto corta DEPOIS de ordenar, então o
+    # excedente que fica pra amanhã é sempre o das empresas mais antigas.
     contacts.sort(key=lambda c: (c.get("companies") or {}).get("raise_date") or "", reverse=True)
 
     pushed = 0

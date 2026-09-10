@@ -87,6 +87,10 @@ def fetch_raises() -> dict:
     protocol_urls = fetch_protocol_urls()
     created = resolved = 0
     for row in parsed:
+        # Resolver domínio só para empresas novas: o fallback /protocol/{slug}
+        # custa uma chamada HTTP por empresa.
+        if db.company_exists(row["llama_id"]):
+            continue
         domain = resolve_domain(row["name"], protocol_urls)
         row["domain"] = domain
         if domain is None:
