@@ -54,11 +54,10 @@ def test_apollo_limits():
 
 @pytest.mark.live
 def test_apollo_mailbox():
-    from common import env
-    from apollo import list_email_accounts
+    from apollo import list_email_accounts, resolve_mailbox_id
 
     ids = [str(a.get("id")) for a in list_email_accounts()]
-    assert str(env("APOLLO_MAILBOX_ID")) in ids, f"mailboxes disponíveis: {ids}"
+    assert resolve_mailbox_id() in ids, f"mailboxes disponíveis: {ids}"
 
 
 @pytest.mark.live
@@ -83,9 +82,11 @@ def test_apollo_dry_run():
     from apollo import (add_to_sequence, create_contact, delete_contact,
                         remove_from_sequence, search_contacts)
 
+    from apollo import resolve_mailbox_id
+
     test_email = env("APOLLO_TEST_EMAIL")  # email do próprio Lucas
     seq_id = env("APOLLO_SEQ_ID")
-    mailbox = env("APOLLO_MAILBOX_ID")
+    mailbox = resolve_mailbox_id()
 
     apollo_id = create_contact(
         {"first_name": "Lucas", "last_name": "Teste", "email": test_email,

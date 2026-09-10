@@ -30,6 +30,27 @@ def list_email_accounts() -> list[dict]:
     return data.get("email_accounts", data if isinstance(data, list) else [])
 
 
+def resolve_mailbox_id() -> str:
+    """APOLLO_MAILBOX_ID do .env; se vazio, descobre via API.
+
+    Com uma única caixa ativa conectada (o Gmail institucional do Lucas),
+    usa ela. Com mais de uma, exige a variável no .env para não enviar
+    da caixa errada.
+    """
+    configured = env("APOLLO_MAILBOX_ID", required=False)
+    if configured:
+        return str(configured)
+    accounts = [a for a in list_email_accounts() if a.get("active") is not False]
+    if len(accounts) == 1:
+        mailbox = str(accounts[0]["id"])
+        log("apollo", f"mailbox resolvido via API: {mailbox} ({accounts[0].get('email')})")
+        return mailbox
+    raise RuntimeError(
+        f"{len(accounts)} caixas ativas no Apollo — defina APOLLO_MAILBOX_ID no .env "
+        f"(rode: python apollo.py --list-mailboxes)"
+    )
+
+
 def get_sequence(seq_id: str) -> dict:
     resp = http_call("GET", f"{BASE}/emailer_campaigns/{seq_id}",
                      step="apollo", headers=headers())
@@ -104,7 +125,7 @@ def push_to_apollo() -> dict:
     """Etapa 3: contacts ready → Apollo contact + sequência (até MAX_PER_DAY)."""
     max_per_day = int(env("MAX_PER_DAY", required=False, default="40"))
     seq_id = env("APOLLO_SEQ_ID")
-    mailbox_id = env("APOLLO_MAILBOX_ID")
+    mailbox_id = resolve_mailbox_id()
 
     contacts = db.ready_contacts(limit=max_per_day)
     # Empresa mais recente primeiro (raise_date da empresa embutida no join)
