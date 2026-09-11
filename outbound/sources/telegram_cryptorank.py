@@ -23,12 +23,15 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 MAX_PAGES = 5  # limite de segurança por execução
 
-# Digests/insights/anúncios — nunca são um raise individual
-NON_RAISE_MARKERS = ("past week", "digest", "weekly", "top 5", "top-5", "insight",
-                     "report", "recap", "overview", "announcement")
+# Digests/insights — nunca são um raise individual (checados no INÍCIO do texto,
+# pra não descartar um raise que mencione essas palavras no meio)
+NON_RAISE_MARKERS = ("past week", "digest", "weekly", "top 5", "top-5", "top 10", "recap")
 
+# "<Nome> raised $12M...", "<Nome> has raised $9M", "<Nome> secured/closed a $4M round"
 RAISE_RE = re.compile(
-    r"^(?P<name>.{2,80}?)\s+raised\s+\$(?P<amount>[\d.,]+)\s*(?P<unit>[KMB])?",
+    r"(?P<name>[^.\n]{2,80}?)\s+(?:has\s+)?"
+    r"(?:raised|secured|closed|bagged|announced)\s+"
+    r"(?:a\s+|an\s+)?\$(?P<amount>[\d.,]+)\s*(?P<unit>[KMB])?(?:illion)?",
     re.IGNORECASE,
 )
 ROUND_RE = re.compile(r"in\s+an?\s+(?P<round>[\w][\w\- ]{0,40}?)(?:\s+funding)?\s+round",
@@ -82,10 +85,14 @@ def parse_posts(html: str) -> list[dict]:
 
 def is_raise_post(post: dict) -> bool:
     text = (post.get("text") or "").strip()
-    if not text or not RAISE_RE.search(text):
+    if not text:
         return False
-    lowered = text.lower()
-    return not any(marker in lowered for marker in NON_RAISE_MARKERS)
+    m = RAISE_RE.search(text)
+    if not m:
+        return False
+    # Digest/insight tem o cabeçalho ANTES de qualquer "X raised $Y" citado nele
+    before = text.lower()[: m.start() + 10]
+    return not any(marker in before for marker in NON_RAISE_MARKERS)
 
 
 def _amount_to_usd(amount: str, unit: str | None) -> int | None:
@@ -114,8 +121,11 @@ def parse_raise(post: dict) -> dict | None:
     round_m = ROUND_RE.search(text)
     cryptorank_url = next((l for l in post.get("links", []) if "cryptorank.io" in l), None)
 
+    name = m.group("name").strip(" ​🚀💰🔥✨⚡️🟢🔹•-–—:|")
+    # O nome vem depois de emojis/prefixos; fica com o último trecho plausível
+    name = re.split(r"[!?;]\s*", name)[-1].strip()
     return {
-        "project_name": m.group("name").strip(" ​🚀💰🔥✨•-–"),
+        "project_name": name,
         "amount_usd": _amount_to_usd(m.group("amount"), m.group("unit")),
         "round_type": round_m.group("round").strip() if round_m else None,
         "investors": investors,

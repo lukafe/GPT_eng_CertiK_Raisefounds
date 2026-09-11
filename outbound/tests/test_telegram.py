@@ -68,6 +68,25 @@ def test_normalize_name():
     assert normalize_name("Dow Protocol") == normalize_name("DOW protocol inc")
 
 
+def test_raise_verb_variants():
+    for text in (
+        "Nexus has raised $3.5M in a Pre-Seed round led by ABC.",
+        "🔥 MegaChain secured a $60M Series B round led by Big VC.",
+        "Acme Labs closed a $10M strategic round.",
+    ):
+        post = {"message_id": 1, "text": text, "links": []}
+        assert is_raise_post(post), text
+        r = parse_raise(post)
+        assert r["amount_usd"] and r["project_name"], text
+
+
+def test_digest_marker_only_at_head():
+    # "weekly" no MEIO do texto não pode descartar um raise real
+    post = {"message_id": 2, "links": [],
+            "text": "Acme raised $5M in a Seed round; more in our weekly digest."}
+    assert is_raise_post(post) is True
+
+
 def test_domain_from_url():
     assert domain_from_url("https://www.axisrobotics.xyz/home") == "axisrobotics.xyz"
     assert domain_from_url(None) is None
@@ -89,5 +108,10 @@ def test_parse_real_raise():
 
     posts = parse_posts(fetch_page())
     raises = [parse_raise(p) for p in posts if is_raise_post(p)]
-    assert raises, "nenhum post de raise na última página do canal"
+    # Em caso de falha, mostra os textos reais pra ajustar o parser:
+    samples = "\n---\n".join(
+        f"id={p['message_id']} links={p['links'][:2]}\n{p['text'][:300]}"
+        for p in posts[-6:]
+    )
+    assert raises, f"nenhum post de raise reconhecido. Últimos posts do canal:\n{samples}"
     assert all(r["project_name"] for r in raises)
