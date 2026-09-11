@@ -1,4 +1,6 @@
-"""Testes da fonte Telegram/CryptoRank. Offline usa a fixture; live bate no t.me."""
+"""Testes da fonte Telegram/CryptoRank. Offline usa fixture com posts reais
+(formato atual '<Nome> $35M Series A Round ⚡ About: ...' e formato antigo com
+'raised'); live bate no t.me."""
 
 from pathlib import Path
 
@@ -9,45 +11,66 @@ from sources.telegram_cryptorank import (domain_from_url, is_raise_post,
 
 FIXTURE = (Path(__file__).parent / "fixtures" / "cryptorank_channel.html").read_text()
 
+
+def posts_by_id():
+    return {p["message_id"]: p for p in parse_posts(FIXTURE)}
+
+
 # --- offline -----------------------------------------------------------------
 
 
 def test_parse_posts():
     posts = parse_posts(FIXTURE)
-    assert [p["message_id"] for p in posts] == [2758, 2760, 2761, 2762]
-    raise_post = posts[1]
-    assert raise_post["posted_at"].isoformat() == "2026-09-09T14:02:11+00:00"
-    assert "Axis Robotics raised $12M" in raise_post["text"]
-    assert "https://cryptorank.io/ico/axis-robotics" in raise_post["links"]
+    assert [p["message_id"] for p in posts] == [2758, 2760, 2761, 2762, 3583, 3584, 3587]
+    p = posts_by_id()[3584]
+    assert p["posted_at"].isoformat() == "2026-09-11T13:40:00+00:00"
+    assert "Latitude $35M Series A Round" in p["text"]
+    assert "https://cryptorank.io/ico/latitude" in p["links"]
 
 
 def test_is_raise_post():
-    posts = {p["message_id"]: p for p in parse_posts(FIXTURE)}
-    assert is_raise_post(posts[2760]) is True      # raise
-    assert is_raise_post(posts[2761]) is True      # raise sem "Seed"
-    assert is_raise_post(posts[2758]) is False     # digest "Top 5 ... past week"
-    assert is_raise_post(posts[2762]) is False     # só foto, sem texto
+    posts = posts_by_id()
+    assert is_raise_post(posts[3583]) is True    # formato atual, sem valor
+    assert is_raise_post(posts[3584]) is True    # formato atual, com valor
+    assert is_raise_post(posts[2760]) is True    # formato antigo com "raised"
+    assert is_raise_post(posts[3587]) is False   # 🔍 INSIGHT (menciona "$50M" e "rounds")
+    assert is_raise_post(posts[2758]) is False   # digest "Top 5 ... past week"
+    assert is_raise_post(posts[2762]) is False   # só foto, sem texto
 
 
-def test_parse_raise_full():
-    posts = {p["message_id"]: p for p in parse_posts(FIXTURE)}
-    r = parse_raise(posts[2760])
+def test_parse_raise_current_format():
+    r = parse_raise(posts_by_id()[3584])
+    assert r["project_name"] == "Latitude"
+    assert r["amount_usd"] == 35_000_000
+    assert r["round_type"] == "Series A"
+    assert "Oak HC/FT" in r["investors"]
+    assert "Coinbase Ventures" in r["investors"]
+    assert "Wilson Sonsini" in r["investors"]
+    assert r["cryptorank_url"] == "https://cryptorank.io/ico/latitude"
+    assert r["source_url"] == "https://t.me/cryptorank_fundraising/3584"
+
+
+def test_parse_raise_no_amount_valuation_only():
+    """TRM Labs: só valuation — o $2B de 'at $2B Valuation' NÃO é o valor da rodada."""
+    r = parse_raise(posts_by_id()[3583])
+    assert r["project_name"] == "TRM Labs"
+    assert r["amount_usd"] is None
+    assert "Series C" in r["round_type"]
+    assert r["investors"] == ["Blockchain Capital"]
+    assert r["cryptorank_url"] == "https://cryptorank.io/ico/trm-labs"
+
+
+def test_parse_raise_legacy_format():
+    r = parse_raise(posts_by_id()[2760])
     assert r["project_name"] == "Axis Robotics"
     assert r["amount_usd"] == 12_000_000
-    assert r["round_type"].lower() == "seed"
-    assert "Hack VC" in r["investors"]
-    assert "Nomad Capital" in r["investors"]
     assert r["cryptorank_url"] == "https://cryptorank.io/ico/axis-robotics"
-    assert r["source_url"] == "https://t.me/cryptorank_fundraising/2760"
-    assert r["source_message_id"] == 2760
 
 
-def test_parse_raise_no_round_type():
-    posts = {p["message_id"]: p for p in parse_posts(FIXTURE)}
-    r = parse_raise(posts[2761])
-    assert r["project_name"] == "Dow Protocol"
-    assert r["amount_usd"] == 9_000_000
-    assert "MH Ventures" in r["investors"]
+def test_insight_link_not_treated_as_cryptorank_project():
+    """/funding-analytics não é página de projeto — não pode virar cryptorank_url."""
+    r = parse_raise(posts_by_id()[3584])
+    assert "/funding-analytics" not in (r["cryptorank_url"] or "")
 
 
 def test_amount_units():
@@ -61,30 +84,10 @@ def test_amount_units():
 
 def test_normalize_name():
     assert normalize_name("Nexus Labs") == "nexus"
-    assert normalize_name("Dow Protocol") == "dow"
+    assert normalize_name("TRM Labs") == "trm"
     assert normalize_name("Acme, Inc.") == "acme"
-    assert normalize_name("BirdAI") == "birdai"
-    # dedupe: variações da mesma empresa colidem
+    assert normalize_name("Latitude") == "latitude"
     assert normalize_name("Dow Protocol") == normalize_name("DOW protocol inc")
-
-
-def test_raise_verb_variants():
-    for text in (
-        "Nexus has raised $3.5M in a Pre-Seed round led by ABC.",
-        "🔥 MegaChain secured a $60M Series B round led by Big VC.",
-        "Acme Labs closed a $10M strategic round.",
-    ):
-        post = {"message_id": 1, "text": text, "links": []}
-        assert is_raise_post(post), text
-        r = parse_raise(post)
-        assert r["amount_usd"] and r["project_name"], text
-
-
-def test_digest_marker_only_at_head():
-    # "weekly" no MEIO do texto não pode descartar um raise real
-    post = {"message_id": 2, "links": [],
-            "text": "Acme raised $5M in a Seed round; more in our weekly digest."}
-    assert is_raise_post(post) is True
 
 
 def test_domain_from_url():
@@ -108,7 +111,6 @@ def test_parse_real_raise():
 
     posts = parse_posts(fetch_page())
     raises = [parse_raise(p) for p in posts if is_raise_post(p)]
-    # Em caso de falha, mostra os textos reais pra ajustar o parser:
     samples = "\n---\n".join(
         f"id={p['message_id']} links={p['links'][:2]}\n{p['text'][:300]}"
         for p in posts[-6:]

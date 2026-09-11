@@ -23,23 +23,36 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 MAX_PAGES = 5  # limite de segurança por execução
 
-# Digests/insights — nunca são um raise individual (checados no INÍCIO do texto,
-# pra não descartar um raise que mencione essas palavras no meio)
-NON_RAISE_MARKERS = ("past week", "digest", "weekly", "top 5", "top-5", "top 10", "recap")
+# Formato real do canal (observado no log do Actions em 2026-09):
+#   <Nome> [$35M] <Tipo> Round [at $2B Valuation] ⚡ 📄 About: <descrição>
+#   🤝 Investors: A (Lead), B, and C 👉 cryptorank.io/ico/<slug>
+# Insights/digests começam com "🔍 INSIGHT:" / "Top ..." e linkam /funding-analytics.
 
-# "<Nome> raised $12M...", "<Nome> has raised $9M", "<Nome> secured/closed a $4M round"
-RAISE_RE = re.compile(
-    r"(?P<name>[^.\n]{2,80}?)\s+(?:has\s+)?"
-    r"(?:raised|secured|closed|bagged|announced)\s+"
-    r"(?:a\s+|an\s+)?\$(?P<amount>[\d.,]+)\s*(?P<unit>[KMB])?(?:illion)?",
+# Posts que começam com esses marcadores nunca são um raise individual
+START_MARKERS = ("insight", "top ", "top-", "digest", "weekly", "recap", "report")
+
+# Valor da rodada: $35M / $500K / $1.5B — mas NÃO o "$2B" de "at $2B Valuation"
+AMOUNT_RE = re.compile(r"\$(?P<amount>[\d.,]+)\s*(?P<unit>[KMB])\b(?!\s*Valuation)",
+                       re.IGNORECASE)
+
+# Tipo de rodada seguido de "Round": Seed, Pre-Seed, Series A, Extended Series C,
+# Strategic, Private, Public, Angel...
+ROUND_RE = re.compile(
+    r"(?P<round>(?:Extended\s+)?(?:Pre-?\s?)?"
+    r"(?:Seed|Series\s+[A-Z]\+?|Strategic|Private|Public|Angel|Venture|Equity|Funding)"
+    r")\s+Round\b",
     re.IGNORECASE,
 )
-ROUND_RE = re.compile(r"in\s+an?\s+(?P<round>[\w][\w\- ]{0,40}?)(?:\s+funding)?\s+round",
-                      re.IGNORECASE)
-LED_BY_RE = re.compile(r"led\s+by\s+(?P<lead>[^,.]+(?:,\s*[^,.]+)*?)(?:[,.]\s*with|\.|$)",
-                       re.IGNORECASE)
-PARTICIPATION_RE = re.compile(r"participation\s+(?:from|of)\s+(?P<rest>.+?)(?:\.|$)",
-                              re.IGNORECASE)
+
+# Formato antigo/alternativo com verbo, mantido como fallback
+VERB_RE = re.compile(
+    r"(?P<name>[^.\n]{2,80}?)\s+(?:has\s+)?(?:raised|secured|closed|announced)\s+"
+    r"(?:a\s+|an\s+)?\$(?P<amount>[\d.,]+)\s*(?P<unit>[KMB])?",
+    re.IGNORECASE,
+)
+
+INVESTORS_RE = re.compile(r"Investors?:\s*(?P<rest>.+?)(?:👉|$)", re.IGNORECASE | re.DOTALL)
+LED_BY_RE = re.compile(r"led\s+by\s+(?P<lead>[^,.]+)", re.IGNORECASE)
 
 NAME_SUFFIXES = {"labs", "lab", "protocol", "inc", "ltd", "llc", "foundation", "co"}
 
@@ -83,16 +96,23 @@ def parse_posts(html: str) -> list[dict]:
     return posts
 
 
+def _head(text: str) -> str:
+    """Trecho antes do 'About:'/emoji separador — onde ficam nome, valor e rodada."""
+    return re.split(r"About:|⚡|📄", text, maxsplit=1)[0].strip()
+
+
+def _clean_name(raw: str) -> str:
+    return re.sub(r"^[\W_]+|[\W_]+$", "", raw, flags=re.UNICODE).strip()
+
+
 def is_raise_post(post: dict) -> bool:
     text = (post.get("text") or "").strip()
     if not text:
         return False
-    m = RAISE_RE.search(text)
-    if not m:
+    start = re.sub(r"^[\W_]+", "", text.lower(), flags=re.UNICODE)
+    if any(start.startswith(m) for m in START_MARKERS):
         return False
-    # Digest/insight tem o cabeçalho ANTES de qualquer "X raised $Y" citado nele
-    before = text.lower()[: m.start() + 10]
-    return not any(marker in before for marker in NON_RAISE_MARKERS)
+    return bool(ROUND_RE.search(_head(text)) or VERB_RE.search(text))
 
 
 def _amount_to_usd(amount: str, unit: str | None) -> int | None:
@@ -104,31 +124,64 @@ def _amount_to_usd(amount: str, unit: str | None) -> int | None:
     return int(value * mult)
 
 
+def _parse_investors(text: str) -> list[str]:
+    m = INVESTORS_RE.search(text)
+    raw = m.group("rest") if m else ""
+    if not raw:
+        led = LED_BY_RE.search(text)
+        raw = led.group("lead") if led else ""
+    investors = []
+    for part in re.split(r",|\band\b", raw):
+        part = re.sub(r"\(Lead\)", "", part, flags=re.IGNORECASE)
+        part = _clean_name(part)
+        if part:
+            investors.append(part)
+    return investors
+
+
 def parse_raise(post: dict) -> dict | None:
     text = (post.get("text") or "").strip()
-    m = RAISE_RE.search(text)
-    if not m:
+    if not text:
+        return None
+    head = _head(text)
+
+    round_m = ROUND_RE.search(head)
+    amount_m = AMOUNT_RE.search(head)
+    verb_m = VERB_RE.search(text)
+
+    # Verbo explícito antes da menção de rodada → formato antigo tem prioridade
+    prefer_verb = verb_m and (not round_m or verb_m.start() < round_m.start())
+
+    if round_m and not prefer_verb:
+        # Formato atual: nome é o que vem antes do valor (ou da rodada, sem valor)
+        cut = min(m.start() for m in (amount_m, round_m) if m)
+        name = _clean_name(head[:cut])
+        amount = _amount_to_usd(amount_m.group("amount"), amount_m.group("unit")) \
+            if amount_m else None
+        round_type = round_m.group("round").strip()
+    elif verb_m or prefer_verb:
+        # Fallback: formato antigo "<Nome> raised $12M in a Seed round"
+        name = _clean_name(verb_m.group("name"))
+        amount = _amount_to_usd(verb_m.group("amount"), verb_m.group("unit"))
+        legacy_round = re.search(
+            r"in\s+an?\s+([\w][\w\- ]{0,40}?)(?:\s+funding)?\s+round", text, re.IGNORECASE)
+        round_type = legacy_round.group(1).strip() if legacy_round else None
+    else:
         return None
 
-    investors: list[str] = []
-    lead = LED_BY_RE.search(text)
-    if lead:
-        investors += [i.strip() for i in lead.group("lead").split(",") if i.strip()]
-    part = PARTICIPATION_RE.search(text)
-    if part:
-        investors += [i.strip(" .") for i in part.group("rest").split(",") if i.strip(" .")]
+    if not name:
+        return None
 
-    round_m = ROUND_RE.search(text)
-    cryptorank_url = next((l for l in post.get("links", []) if "cryptorank.io" in l), None)
-
-    name = m.group("name").strip(" ​🚀💰🔥✨⚡️🟢🔹•-–—:|")
-    # O nome vem depois de emojis/prefixos; fica com o último trecho plausível
-    name = re.split(r"[!?;]\s*", name)[-1].strip()
+    cryptorank_url = next(
+        (l for l in post.get("links", [])
+         if "cryptorank.io/ico/" in l or "cryptorank.io/funding-rounds/" in l),
+        None,
+    )
     return {
         "project_name": name,
-        "amount_usd": _amount_to_usd(m.group("amount"), m.group("unit")),
-        "round_type": round_m.group("round").strip() if round_m else None,
-        "investors": investors,
+        "amount_usd": amount,
+        "round_type": round_type,
+        "investors": _parse_investors(text),
         "cryptorank_url": cryptorank_url,
         "source_message_id": post["message_id"],
         "source_url": f"https://t.me/{CHANNEL}/{post['message_id']}",
