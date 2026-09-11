@@ -4,6 +4,7 @@ CLI útil: python apollo.py --list-mailboxes  → descobre o APOLLO_MAILBOX_ID.
 """
 
 import sys
+import time
 from datetime import datetime, timezone
 
 import db
@@ -127,20 +128,35 @@ def push_to_apollo() -> dict:
     seq_id = env("APOLLO_SEQ_ID")
     mailbox_id = resolve_mailbox_id()
 
+    # Teto diário real: desconta o que já entrou em sequência hoje (rodada dupla)
+    already_today = db.count_pushed_today()
+    budget = max(0, max_per_day - already_today)
+    if budget == 0:
+        detail = f"teto diário atingido ({already_today}/{max_per_day}); nada a enviar"
+        log("push_to_apollo", detail)
+        db.log_run("push_to_apollo", True, detail)
+        return {"pushed": 0, "candidates": 0}
+
     contacts = db.ready_contacts()
     # Empresa mais recente primeiro; o teto corta DEPOIS de ordenar, então o
     # excedente que fica pra amanhã é sempre o das empresas mais antigas.
     contacts.sort(key=lambda c: (c.get("companies") or {}).get("raise_date") or "", reverse=True)
 
     pushed = 0
-    for c in contacts[:max_per_day]:
+    for c in contacts[:budget]:
         company = c.get("companies") or {}
         try:
-            apollo_id = create_contact(c, company)
+            # Idempotente: se uma rodada anterior criou o contato mas falhou depois,
+            # reaproveita o apollo_id em vez de criar duplicata no Apollo.
+            apollo_id = c.get("apollo_id")
+            if not apollo_id:
+                apollo_id = create_contact(c, company)
+                db.update_contact(c["id"], apollo_id=apollo_id)
             add_to_sequence(apollo_id, seq_id, mailbox_id)
-            db.update_contact(c["id"], apollo_id=apollo_id, status="in_sequence")
+            db.update_contact(c["id"], status="in_sequence")
             db.insert_outreach(c["id"], seq_id)
             pushed += 1
+            time.sleep(1)  # educação com a API (80 chamadas em rajada = risco de 429)
         except Exception as e:  # noqa: BLE001
             log("push_to_apollo", f"ERRO em {c['email']}: {e}")
             db.log_run("push_to_apollo", False, f"{c['email']}: {e}")

@@ -61,6 +61,44 @@ def set_state(key: str, value: str) -> None:
     ).execute()
 
 
+# --- lock de execução (evita rodada dupla: schedule + disparo manual) -----------
+
+LOCK_KEY = "pipeline_lock"
+LOCK_STALE_MINUTES = 45
+
+
+def acquire_lock() -> bool:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    current = get_state(LOCK_KEY)
+    if current:
+        try:
+            held_since = datetime.fromisoformat(current)
+            if now - held_since < timedelta(minutes=LOCK_STALE_MINUTES):
+                return False  # outra rodada em andamento
+        except ValueError:
+            pass  # valor corrompido: assume lock velho
+    set_state(LOCK_KEY, now.isoformat())
+    return True
+
+
+def release_lock() -> None:
+    set_state(LOCK_KEY, "")
+
+
+def count_pushed_today() -> int:
+    """Contatos que entraram em sequência hoje (UTC) — pra rodada dupla não estourar o teto."""
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    resp = (
+        client().table("outreach").select("id", count="exact")
+        .gte("added_at", today).limit(1).execute()
+    )
+    return resp.count or 0
+
+
 def companies_by_status(status: str, require_domain: bool = False, limit: int | None = None):
     q = (
         client()

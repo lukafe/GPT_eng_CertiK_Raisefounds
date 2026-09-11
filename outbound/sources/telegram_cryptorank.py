@@ -45,6 +45,9 @@ ROUND_RE = re.compile(
 )
 
 # Formato antigo/alternativo com verbo, mantido como fallback
+# Round sem tipo ("Delta $10M Round") ainda é raise — round_type fica None
+AMOUNT_ROUND_RE = re.compile(r"\$[\d.,]+\s*[KMB]\s+(?:Funding\s+)?Round\b", re.IGNORECASE)
+
 VERB_RE = re.compile(
     r"(?P<name>[^.\n]{2,80}?)\s+(?:has\s+)?(?:raised|secured|closed|announced)\s+"
     r"(?:a\s+|an\s+)?\$(?P<amount>[\d.,]+)\s*(?P<unit>[KMB])?",
@@ -102,7 +105,9 @@ def _head(text: str) -> str:
 
 
 def _clean_name(raw: str) -> str:
-    return re.sub(r"^[\W_]+|[\W_]+$", "", raw, flags=re.UNICODE).strip()
+    name = re.sub(r"^[\W_]+|[\W_]+$", "", raw, flags=re.UNICODE).strip()
+    # "Acme Undisclosed Strategic Round": Undisclosed é o valor, não parte do nome
+    return re.sub(r"\s+undisclosed(\s+amount)?$", "", name, flags=re.IGNORECASE).strip()
 
 
 def is_raise_post(post: dict) -> bool:
@@ -112,7 +117,9 @@ def is_raise_post(post: dict) -> bool:
     start = re.sub(r"^[\W_]+", "", text.lower(), flags=re.UNICODE)
     if any(start.startswith(m) for m in START_MARKERS):
         return False
-    return bool(ROUND_RE.search(_head(text)) or VERB_RE.search(text))
+    head = _head(text)
+    return bool(ROUND_RE.search(head) or AMOUNT_ROUND_RE.search(head)
+                or VERB_RE.search(text))
 
 
 def _amount_to_usd(amount: str, unit: str | None) -> int | None:
@@ -139,6 +146,25 @@ def _parse_investors(text: str) -> list[str]:
     return investors
 
 
+def _build(post: dict, name: str, amount: int | None,
+           round_type: str | None, text: str) -> dict:
+    cryptorank_url = next(
+        (l for l in post.get("links", [])
+         if "cryptorank.io/ico/" in l or "cryptorank.io/funding-rounds/" in l),
+        None,
+    )
+    return {
+        "project_name": name,
+        "amount_usd": amount,
+        "round_type": round_type,
+        "investors": _parse_investors(text),
+        "cryptorank_url": cryptorank_url,
+        "source_message_id": post["message_id"],
+        "source_url": f"https://t.me/{CHANNEL}/{post['message_id']}",
+        "posted_at": post.get("posted_at"),
+    }
+
+
 def parse_raise(post: dict) -> dict | None:
     text = (post.get("text") or "").strip()
     if not text:
@@ -148,6 +174,16 @@ def parse_raise(post: dict) -> dict | None:
     round_m = ROUND_RE.search(head)
     amount_m = AMOUNT_RE.search(head)
     verb_m = VERB_RE.search(text)
+    amount_round_m = AMOUNT_ROUND_RE.search(head)
+
+    # "Delta $10M Round" sem tipo: trata como round sem round_type
+    if not round_m and amount_round_m and amount_m:
+        name = _clean_name(head[: amount_m.start()])
+        if not name:
+            return None
+        return _build(post, name,
+                      _amount_to_usd(amount_m.group("amount"), amount_m.group("unit")),
+                      None, text)
 
     # Verbo explícito antes da menção de rodada → formato antigo tem prioridade
     prefer_verb = verb_m and (not round_m or verb_m.start() < round_m.start())
@@ -171,22 +207,7 @@ def parse_raise(post: dict) -> dict | None:
 
     if not name:
         return None
-
-    cryptorank_url = next(
-        (l for l in post.get("links", [])
-         if "cryptorank.io/ico/" in l or "cryptorank.io/funding-rounds/" in l),
-        None,
-    )
-    return {
-        "project_name": name,
-        "amount_usd": amount,
-        "round_type": round_type,
-        "investors": _parse_investors(text),
-        "cryptorank_url": cryptorank_url,
-        "source_message_id": post["message_id"],
-        "source_url": f"https://t.me/{CHANNEL}/{post['message_id']}",
-        "posted_at": post.get("posted_at"),
-    }
+    return _build(post, name, amount, round_type, text)
 
 
 def fetch_new_raises(since_message_id: int) -> list[dict]:

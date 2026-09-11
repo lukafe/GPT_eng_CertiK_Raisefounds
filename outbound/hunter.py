@@ -11,6 +11,47 @@ MIN_CONFIDENCE = 50
 GENERIC_SKIP = {"info", "support", "press", "noreply", "no-reply"}
 GENERIC_LAST_RESORT = {"hello", "contact"}
 
+# Máximo de contatos abordados por empresa: 10 pessoas da mesma empresa recebendo
+# o mesmo email no mesmo dia parece spam interno e queima a marca.
+MAX_CONTACTS_PER_COMPANY = 3
+
+# Quem decide comprar um audit: técnico > fundador > operações. Cargos de
+# marketing/vendas/RH nunca entram.
+POSITION_SCORES = (
+    (("cto", "chief technology"), 100),
+    (("founder", "co-founder", "ceo", "chief executive", "owner"), 90),
+    (("head of engineering", "vp of engineering", "vp engineering",
+      "engineering lead", "tech lead", "head of security", "security lead",
+      "head of tech"), 80),
+    (("coo", "cfo", "chief"), 60),
+    (("engineer", "developer", "security", "devops", "blockchain"), 40),
+)
+POSITION_NEVER = ("marketing", "sales", "business development", "hr",
+                  "human resources", "recruit", "talent", "community",
+                  "social media", "content", "designer", "support")
+
+
+def score_position(position: str | None) -> int:
+    """0 = nunca abordar; quanto maior, mais prioridade. Sem cargo = 10 (neutro)."""
+    if not position:
+        return 10
+    p = position.lower()
+    if any(bad in p for bad in POSITION_NEVER):
+        return 0
+    for keywords, score in POSITION_SCORES:
+        if any(k in p for k in keywords):
+            return score
+    return 10
+
+
+def select_ready(candidates: list[dict]) -> list[dict]:
+    """Dos candidatos elegíveis, escolhe os até MAX_CONTACTS_PER_COMPANY melhores
+    por (score de cargo, confidence). Cargo com score 0 nunca entra."""
+    scored = [c for c in candidates if score_position(c.get("position")) > 0]
+    scored.sort(key=lambda c: (score_position(c.get("position")),
+                               c.get("confidence") or 0), reverse=True)
+    return scored[:MAX_CONTACTS_PER_COMPANY]
+
 
 def searches_available() -> int:
     resp = http_call(
@@ -64,9 +105,13 @@ def enrich_company(company: dict) -> int:
         for e in emails
     )
 
+    # 1º passo: elegibilidade (regras de genérico/confidence); 2º: top N por cargo
+    eligible = [e for e in emails if classify_email(e, has_nominal) == "ready"]
+    chosen = {e["value"] for e in select_ready(eligible)}
+
     ready = 0
     for e in emails:
-        status = classify_email(e, has_nominal)
+        status = "ready" if e["value"] in chosen else "skipped"
         created = db.insert_contact_if_new({
             "company_id": company["id"],
             "first_name": e.get("first_name"),

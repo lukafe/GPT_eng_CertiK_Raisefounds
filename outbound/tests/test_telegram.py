@@ -73,6 +73,26 @@ def test_insight_link_not_treated_as_cryptorank_project():
     assert "/funding-analytics" not in (r["cryptorank_url"] or "")
 
 
+def test_undisclosed_amount_not_in_name():
+    post = {"message_id": 5, "links": [],
+            "text": "Acme Undisclosed Strategic Round ⚡ About: y 🤝 Investor: B (Lead)"}
+    assert is_raise_post(post)
+    r = parse_raise(post)
+    assert r["project_name"] == "Acme"
+    assert r["amount_usd"] is None
+    assert r["round_type"] == "Strategic"
+
+
+def test_round_without_type_keyword():
+    post = {"message_id": 6, "links": [],
+            "text": "Delta $10M Round ⚡ About: generic round sem tipo"}
+    assert is_raise_post(post)
+    r = parse_raise(post)
+    assert r["project_name"] == "Delta"
+    assert r["amount_usd"] == 10_000_000
+    assert r["round_type"] is None
+
+
 def test_amount_units():
     from sources.telegram_cryptorank import _amount_to_usd
 
