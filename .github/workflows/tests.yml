@@ -13,6 +13,11 @@ on:
           - live-safe      # + Supabase e canal Telegram (não gasta cota)
           - live-full      # + Hunter e Apollo (consome 1 busca do Hunter)
           - dry-run        # main.py --dry-run (popula o banco, não envia email)
+          - email-real     # coloca o PRÓPRIO Lucas na sequência: envia email DE VERDADE
+      test_email:
+        description: "Só para email-real: o email que vai receber o teste"
+        type: string
+        required: false
   push:
     branches: [main, claude/tender-ride-wywfs0]
 
@@ -52,6 +57,12 @@ jobs:
       - name: Dry-run ponta a ponta (popula o banco, não envia email)
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'dry-run'
         run: python main.py --dry-run
+
+      - name: Teste real de email — adiciona o Lucas à sequência (envia de verdade)
+        if: github.event_name == 'workflow_dispatch' && inputs.suite == 'email-real'
+        env:
+          APOLLO_TEST_EMAIL: ${{ inputs.test_email }}
+        run: python send_test_email.py
 
       - name: Log da rodada
         if: always()
