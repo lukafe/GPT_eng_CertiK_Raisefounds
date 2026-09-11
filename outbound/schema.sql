@@ -1,17 +1,28 @@
 -- Rodar uma vez no SQL Editor do Supabase (Dashboard → SQL Editor → New query → colar → Run).
 
 create table companies (
-  id            bigserial primary key,
-  llama_id      text unique,
-  name          text not null,
-  domain        text,
-  raise_date    date,
-  category      text,
-  chains        text[],
-  country       text,
-  time_zone     text default 'Etc/UTC',
-  status        text default 'new',   -- new | enriched | no_contacts | done
-  created_at    timestamptz default now()
+  id                 bigserial primary key,
+  name               text not null,
+  name_normalized    text,
+  domain             text,
+  raise_date         date,
+  category           text,               -- tipo de rodada (Seed, Series A...)
+  country            text,
+  time_zone          text default 'Etc/UTC',
+  source             text default 'telegram_cryptorank',
+  source_message_id  bigint unique,
+  source_url         text,
+  cryptorank_url     text,
+  status             text default 'queued',  -- queued | needs_domain | enriched | no_contacts | done
+  created_at         timestamptz default now()
+);
+
+create index companies_name_normalized_idx on companies (name_normalized);
+
+create table source_state (
+  key         text primary key,
+  value       text,
+  updated_at  timestamptz default now()
 );
 
 create table contacts (

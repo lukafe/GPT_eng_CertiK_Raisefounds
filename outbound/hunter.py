@@ -97,7 +97,7 @@ def enrich_contacts() -> dict:
         db.log_run("enrich_contacts", False, detail)
         return {"companies": 0, "ready": 0, "skipped_for_quota": True}
 
-    companies = db.companies_by_status("new", require_domain=True, limit=per_day)
+    companies = db.companies_by_status("queued", require_domain=True, limit=per_day)
     total_ready = 0
     for company in companies:
         try:

@@ -8,14 +8,17 @@ import sys
 from common import http_call, log
 
 
-def check_defillama() -> bool:
+def check_telegram() -> bool:
     try:
-        resp = http_call("GET", "https://api.llama.fi/raises", step="healthcheck")
+        from sources.telegram_cryptorank import CHANNEL_URL, UA
+
+        resp = http_call("GET", CHANNEL_URL, step="healthcheck",
+                         headers={"User-Agent": UA}, timeout=20)
         ok = resp.status_code == 200
-        log("healthcheck", f"DefiLlama status={resp.status_code}")
+        log("healthcheck", f"Canal Telegram status={resp.status_code}")
         return ok
     except Exception as e:  # noqa: BLE001
-        log("healthcheck", f"DefiLlama inacessível: {e}")
+        log("healthcheck", f"Canal Telegram inacessível: {e}")
         return False
 
 
@@ -57,7 +60,7 @@ def check_apollo() -> bool:
 
 def main() -> None:
     checks = [
-        ("defillama", check_defillama),
+        ("telegram", check_telegram),
         ("supabase", check_supabase),
         ("hunter", check_hunter),
         ("apollo", check_apollo),

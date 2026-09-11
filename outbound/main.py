@@ -31,9 +31,9 @@ def main() -> None:
 
     import apollo
     import hunter
-    import llama
+    from sources import telegram_cryptorank
 
-    run_step("fetch_raises", llama.fetch_raises)
+    run_step("fetch_raises", telegram_cryptorank.fetch_raises)
     run_step("enrich_contacts", hunter.enrich_contacts)
 
     if args.dry_run:

@@ -27,18 +27,38 @@ def companies_count() -> int:
     return resp.count or 0
 
 
-def company_exists(llama_id: str) -> bool:
+def company_exists_by_message(source_message_id: int) -> bool:
     return bool(
-        client().table("companies").select("id").eq("llama_id", llama_id).execute().data
+        client().table("companies").select("id")
+        .eq("source_message_id", source_message_id).execute().data
     )
 
 
-def insert_company_if_new(row: dict) -> bool:
-    """Upsert por llama_id que só cria (nunca atualiza). Retorna True se criou."""
-    if company_exists(row["llama_id"]):
+def company_exists_by_name(name_normalized: str) -> bool:
+    """Dedupe por nome normalizado: não abordar a mesma empresa duas vezes."""
+    if not name_normalized:
         return False
+    return bool(
+        client().table("companies").select("id")
+        .eq("name_normalized", name_normalized).execute().data
+    )
+
+
+def insert_company(row: dict) -> None:
     client().table("companies").insert(row).execute()
-    return True
+
+
+# --- estado do scraper --------------------------------------------------------
+
+def get_state(key: str) -> str | None:
+    data = client().table("source_state").select("value").eq("key", key).execute().data
+    return data[0]["value"] if data else None
+
+
+def set_state(key: str, value: str) -> None:
+    client().table("source_state").upsert(
+        {"key": key, "value": value}, on_conflict="key"
+    ).execute()
 
 
 def companies_by_status(status: str, require_domain: bool = False, limit: int | None = None):

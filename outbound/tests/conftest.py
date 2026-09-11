@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-# Permite `import common`, `import llama` etc. de dentro de tests/.
+# Permite `import common`, `import db` etc. de dentro de tests/.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 

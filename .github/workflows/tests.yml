@@ -10,7 +10,7 @@ on:
         default: offline
         options:
           - offline        # só lógica pura, não toca nenhuma API
-          - live-safe      # + Supabase e DefiLlama (não gasta cota)
+          - live-safe      # + Supabase e canal Telegram (não gasta cota)
           - live-full      # + Hunter e Apollo (consome 1 busca do Hunter)
           - dry-run        # main.py --dry-run (popula o banco, não envia email)
   push:
@@ -41,9 +41,9 @@ jobs:
       - name: Testes offline (sempre)
         run: pytest -m "not live" -v
 
-      - name: Live seguro — Supabase + DefiLlama
+      - name: Live seguro — Supabase + canal Telegram
         if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'live-safe' || inputs.suite == 'live-full')
-        run: pytest -m live tests/test_supabase.py tests/test_llama.py -v
+        run: pytest -m live tests/test_supabase.py tests/test_telegram.py -v
 
       - name: Live completo — Hunter + Apollo (consome 1 busca do Hunter)
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'live-full'

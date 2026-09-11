@@ -10,13 +10,15 @@ import db
 pytestmark = pytest.mark.live
 
 EXPECTED_COLUMNS = {
-    "companies": {"id", "llama_id", "name", "domain", "raise_date", "category",
-                  "chains", "country", "time_zone", "status", "created_at"},
+    "companies": {"id", "name", "name_normalized", "domain", "raise_date", "category",
+                  "country", "time_zone", "status", "created_at",
+                  "source", "source_message_id", "source_url", "cryptorank_url"},
     "contacts": {"id", "company_id", "first_name", "last_name", "position",
                  "email", "confidence", "apollo_id", "status", "created_at"},
     "outreach": {"id", "contact_id", "sequence_id", "added_at", "replied_at",
                  "bounced", "finished_at"},
     "runs": {"id", "ran_at", "step", "ok", "detail"},
+    "source_state": {"key", "value", "updated_at"},
 }
 
 

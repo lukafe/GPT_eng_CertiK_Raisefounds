@@ -1,6 +1,6 @@
 """Testes da infra comum (fase 0): log, retry e leitura de env.
 
-Os testes das seções do spec (Supabase, DefiLlama, Hunter, Apollo) entram nas
+Os testes das demais integrações (Supabase, Telegram/CryptoRank, Hunter, Apollo) entram nas
 fases correspondentes; cada um gravará uma linha em `runs` quando o db existir.
 """
 

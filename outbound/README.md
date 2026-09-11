@@ -1,8 +1,26 @@
 # Outbound MVP — raises → Hunter → Apollo → Supabase
 
-Todo dia: pega projetos cripto que anunciaram raise no DefiLlama, acha emails do time
-via Hunter, coloca cada contato na sequência do Apollo (que envia da caixa do Lucas às
-9h no fuso do projeto) e registra tudo no Supabase.
+Todo dia: pega projetos cripto que anunciaram raise no canal público do CryptoRank no
+Telegram (@cryptorank_fundraising), acha emails do time via Hunter, coloca cada contato
+na sequência do Apollo (que envia da caixa do Lucas às 9h no fuso do projeto) e registra
+tudo no Supabase.
+
+## Como funciona a fonte (scraper do Telegram)
+
+Sem API key, sem bot: o scraper lê o preview web público `https://t.me/s/cryptorank_fundraising`
+(últimas ~20 mensagens; paginação via `?before=<message_id>`, máx. 5 páginas por rodada).
+
+- Post de **raise** segue o padrão `"<Projeto> raised $<valor> in a <Rodada> round led by ..."`
+  → extrai nome, valor, rodada, investidores e o link do CryptoRank.
+- **Digests/insights** ("Top 5 funding rounds of the past week" etc.) são ignorados.
+- O **domínio** vem da página do CryptoRank linkada no post; sem domínio, a empresa fica
+  `status='needs_domain'` (não é descartada).
+- **Dedupe** por `source_message_id` e por nome normalizado (lowercase, sem sufixos
+  Labs/Protocol/Inc), pra nunca abordar a mesma empresa duas vezes.
+- O último `message_id` processado fica em `source_state`; cada rodada só pega o que é novo.
+- Fila diária: empresas entram como `queued`; o enriquecimento pega 3–4 por dia
+  (`COMPANIES_PER_DAY`), o resto espera os próximos dias.
+- Inspeção manual dos posts: `python sources/telegram_cryptorank.py --dump`.
 
 ## Como rodar
 
@@ -63,7 +81,7 @@ Nota: agendamentos (`schedule`) só disparam a partir do branch default (`main`)
 0 6 * * * cd /caminho/para/outbound && python healthcheck.py && python main.py >> log.txt 2>&1
 ```
 
-O healthcheck pinga DefiLlama, Supabase, Hunter e Apollo; se qualquer um falhar,
+O healthcheck pinga o canal do Telegram, Supabase, Hunter e Apollo; se qualquer um falhar,
 o `main.py` não roda naquele dia (o `&&` corta) e o motivo fica em `log.txt`.
 O horário do email é responsabilidade do Apollo (sending window 09:00–09:30 no
 fuso do contato) — o cron só abastece a fila.
