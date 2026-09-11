@@ -1,0 +1,58 @@
+name: Tests
+
+# Rodar manualmente: aba Actions → Tests → Run workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Qual suíte rodar"
+        type: choice
+        default: offline
+        options:
+          - offline        # só lógica pura, não toca nenhuma API
+          - live-safe      # + Supabase e DefiLlama (não gasta cota)
+          - live-full      # + Hunter e Apollo (consome 1 busca do Hunter)
+          - dry-run        # main.py --dry-run (popula o banco, não envia email)
+  push:
+    branches: [main, claude/tender-ride-wywfs0]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: outbound
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
+      APOLLO_KEY: ${{ secrets.APOLLO_KEY }}
+      APOLLO_SEQ_ID: ${{ secrets.APOLLO_SEQ_ID }}
+      APOLLO_MAILBOX_ID: ${{ secrets.APOLLO_MAILBOX_ID }}
+      MAX_PER_DAY: "40"
+      COMPANIES_PER_DAY: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+
+      - name: Testes offline (sempre)
+        run: pytest -m "not live" -v
+
+      - name: Live seguro — Supabase + DefiLlama
+        if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'live-safe' || inputs.suite == 'live-full')
+        run: pytest -m live tests/test_supabase.py tests/test_llama.py -v
+
+      - name: Live completo — Hunter + Apollo (consome 1 busca do Hunter)
+        if: github.event_name == 'workflow_dispatch' && inputs.suite == 'live-full'
+        run: pytest -m live tests/test_hunter.py tests/test_apollo.py -v
+
+      - name: Dry-run ponta a ponta (popula o banco, não envia email)
+        if: github.event_name == 'workflow_dispatch' && inputs.suite == 'dry-run'
+        run: python main.py --dry-run
+
+      - name: Log da rodada
+        if: always()
+        run: cat log.txt 2>/dev/null || true

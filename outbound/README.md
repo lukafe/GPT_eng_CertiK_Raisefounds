@@ -43,7 +43,21 @@ Atenção:
   Só roda com `APOLLO_DRY_RUN_OK=1 APOLLO_TEST_EMAIL=seu@email pytest -m live tests/test_apollo.py`.
 - Cada teste grava uma linha em `runs` (best-effort).
 
-## Cron (diário, 06:00 UTC)
+## Rodando pelo GitHub Actions (recomendado)
+
+Credenciais: repo → Settings → Secrets and variables → Actions → New repository secret,
+uma por uma: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `HUNTER_API_KEY`, `APOLLO_KEY`,
+`APOLLO_SEQ_ID` (e `APOLLO_MAILBOX_ID` opcional — o código descobre sozinho).
+
+- **Testes**: aba Actions → *Tests* → Run workflow → escolher a suíte
+  (`offline` → `live-safe` → `live-full` → `dry-run`, nessa ordem na primeira vez).
+- **Produção**: o workflow *Daily outbound* roda sozinho todo dia às 06:00 UTC
+  (healthcheck + pipeline). Também aceita disparo manual, com opção de dry-run.
+- O `log.txt` de cada rodada aparece no último step do job.
+
+Nota: agendamentos (`schedule`) só disparam a partir do branch default (`main`).
+
+## Cron local (alternativa, diário 06:00 UTC)
 
 ```
 0 6 * * * cd /caminho/para/outbound && python healthcheck.py && python main.py >> log.txt 2>&1
