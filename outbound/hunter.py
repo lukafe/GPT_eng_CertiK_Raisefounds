@@ -62,11 +62,16 @@ def searches_available() -> int:
     return resp.json()["data"]["requests"]["searches"]["available"]
 
 
-def domain_search(domain: str) -> dict:
-    resp = http_call(
-        "GET", DOMAIN_SEARCH_URL, step="enrich_contacts",
-        params={"domain": domain, "api_key": env("HUNTER_API_KEY"), "limit": 10},
-    )
+def domain_search(domain: str | None = None, company: str | None = None) -> dict:
+    """Busca por domínio OU por nome da empresa (o Hunter resolve o domínio)."""
+    params = {"api_key": env("HUNTER_API_KEY"), "limit": 10}
+    if domain:
+        params["domain"] = domain
+    elif company:
+        params["company"] = company
+    else:
+        raise ValueError("domain_search precisa de domain ou company")
+    resp = http_call("GET", DOMAIN_SEARCH_URL, step="enrich_contacts", params=params)
     resp.raise_for_status()
     return resp.json()["data"]
 
@@ -88,11 +93,17 @@ def classify_email(email_item: dict, has_nominal: bool) -> str:
 
 
 def enrich_company(company: dict) -> int:
-    """Domain-search de uma empresa; grava contatos. Retorna nº de contatos ready."""
-    data = domain_search(company["domain"])
+    """Domain-search de uma empresa; grava contatos. Retorna nº de contatos ready.
+
+    Sem domínio (CryptoRank bloqueou a resolução), busca pelo NOME — o Hunter
+    resolve o domínio e a gente grava de volta na empresa.
+    """
+    data = domain_search(domain=company.get("domain"), company=company["name"])
 
     country = data.get("country")
     updates: dict = {}
+    if not company.get("domain") and data.get("domain"):
+        updates["domain"] = data["domain"]
     if country:
         updates["country"] = country
         updates["time_zone"] = tz_for_country(country)
@@ -142,7 +153,8 @@ def enrich_contacts() -> dict:
         db.log_run("enrich_contacts", False, detail)
         return {"companies": 0, "ready": 0, "skipped_for_quota": True}
 
-    companies = db.companies_by_status("queued", require_domain=True, limit=per_day)
+    # Sem require_domain: empresa sem domínio é buscada pelo nome no Hunter
+    companies = db.companies_by_status("queued", limit=per_day)
     total_ready = 0
     for company in companies:
         try:

@@ -238,6 +238,7 @@ def resolve_website(cryptorank_url: str | None) -> str | None:
         resp = http_call("GET", cryptorank_url, step="fetch_raises",
                          headers={"User-Agent": UA}, timeout=20)
         if resp.status_code != 200:
+            log("fetch_raises", f"cryptorank {resp.status_code} em {cryptorank_url}")
             return None
         html = resp.text
     except Exception as e:  # noqa: BLE001
@@ -298,7 +299,8 @@ def fetch_raises() -> dict:
             "source_message_id": r["source_message_id"],
             "source_url": r["source_url"],
             "cryptorank_url": r["cryptorank_url"],
-            "status": "queued" if domain else "needs_domain",
+            # Sem domínio também entra na fila: o Hunter resolve pelo nome
+            "status": "queued",
         }
         db.insert_company(row)
         created += 1
