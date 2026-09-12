@@ -1,0 +1,35 @@
+name: Scrape raises (2h)
+
+# 24/7: lê o canal do CryptoRank a cada 2h e enfileira empresas novas.
+# Não gasta cota de Hunter/Apollo — só leitura do Telegram + gravação no Supabase.
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: outbound-pipeline
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: outbound
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
+      APOLLO_KEY: ${{ secrets.APOLLO_KEY }}
+      APOLLO_SEQ_ID: ${{ secrets.APOLLO_SEQ_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python main.py --steps fetch
+      - name: Log da rodada
+        if: always()
+        run: cat log.txt 2>/dev/null || true

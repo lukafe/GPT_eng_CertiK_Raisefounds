@@ -143,6 +143,7 @@ def push_to_apollo() -> dict:
     contacts.sort(key=lambda c: (c.get("companies") or {}).get("raise_date") or "", reverse=True)
 
     pushed = 0
+    pushed_contacts = []
     for c in contacts[:budget]:
         company = c.get("companies") or {}
         try:
@@ -156,6 +157,7 @@ def push_to_apollo() -> dict:
             db.update_contact(c["id"], status="in_sequence")
             db.insert_outreach(c["id"], seq_id)
             pushed += 1
+            pushed_contacts.append({**c, "_company_name": company.get("name")})
             time.sleep(1)  # educação com a API (80 chamadas em rajada = risco de 429)
         except Exception as e:  # noqa: BLE001
             log("push_to_apollo", f"ERRO em {c['email']}: {e}")
@@ -164,6 +166,10 @@ def push_to_apollo() -> dict:
     detail = f"{pushed}/{len(contacts)} contatos enviados à sequência"
     log("push_to_apollo", detail)
     db.log_run("push_to_apollo", True, detail)
+
+    from notify import notify_pushed
+
+    notify_pushed(pushed_contacts)
     return {"pushed": pushed, "candidates": len(contacts)}
 
 
@@ -178,6 +184,10 @@ def sync_status() -> dict:
     by_apollo_id = {c["apollo_id"]: c for c in in_seq if c.get("apollo_id")}
     now = datetime.now(timezone.utc).isoformat()
     updated = 0
+    replies, bounces, finished_list, followups = [], [], [], []
+
+    def _label(c: dict) -> str:
+        return f"{c.get('first_name') or '?'} {c.get('last_name') or ''} <{c['email']}>"
 
     for remote in search_contacts(list(by_apollo_id.keys())):
         local = by_apollo_id.get(remote.get("id"))
@@ -186,6 +196,16 @@ def sync_status() -> dict:
         for entry in remote.get("contact_campaign_statuses", []):
             if str(entry.get("emailer_campaign_id")) != str(seq_id):
                 continue
+
+            # Follow-up: o step atual avançou desde o último sync (shape tolerante)
+            step = entry.get("current_step") or entry.get("current_step_number") \
+                or entry.get("step")
+            if isinstance(step, int):
+                prev = db.get_outreach_step(local["id"])
+                if prev is not None and step > prev:
+                    followups.append(_label(local))
+                    db.update_outreach_by_contact(local["id"], last_step=step)
+
             new_status = interpret_campaign_status(entry)
             if not new_status:
                 continue
@@ -196,6 +216,8 @@ def sync_status() -> dict:
                 "finished": {"finished_at": now},
             }[new_status]
             db.update_outreach_by_contact(local["id"], **outreach_fields)
+            {"replied": replies, "bounced": bounces,
+             "finished": finished_list}[new_status].append(_label(local))
             updated += 1
 
     # Empresa → done quando nenhum contato dela segue in_sequence
@@ -210,6 +232,10 @@ def sync_status() -> dict:
     detail = f"{updated} contatos atualizados, {done} empresas done"
     log("sync_status", detail)
     db.log_run("sync_status", True, detail)
+
+    from notify import notify_sync
+
+    notify_sync(followups, replies, bounces, finished_list)
     return {"updated": updated, "companies_done": done}
 
 

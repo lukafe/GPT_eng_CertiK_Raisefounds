@@ -295,6 +295,8 @@ def fetch_raises() -> dict:
             "domain": domain,
             "raise_date": r["posted_at"].date().isoformat() if r["posted_at"] else None,
             "category": r["round_type"],
+            "amount_usd": r["amount_usd"],
+            "investors": r["investors"] or [],
             "source": "telegram_cryptorank",
             "source_message_id": r["source_message_id"],
             "source_url": r["source_url"],

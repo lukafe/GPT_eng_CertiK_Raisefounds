@@ -100,11 +100,14 @@ def count_pushed_today() -> int:
 
 
 def companies_by_status(status: str, require_domain: bool = False, limit: int | None = None):
+    """Prioridade da fila: maior round primeiro (mais poder de compra),
+    empate por mais recente. Nulls de amount vão pro fim."""
     q = (
         client()
         .table("companies")
         .select("*")
         .eq("status", status)
+        .order("amount_usd", desc=True, nullsfirst=False)
         .order("raise_date", desc=True)
     )
     if require_domain:
@@ -158,8 +161,16 @@ def update_contact(contact_id: int, **fields) -> None:
 
 def insert_outreach(contact_id: int, sequence_id: str) -> None:
     client().table("outreach").insert(
-        {"contact_id": contact_id, "sequence_id": sequence_id}
+        {"contact_id": contact_id, "sequence_id": sequence_id, "last_step": 1}
     ).execute()
+
+
+def get_outreach_step(contact_id: int) -> int | None:
+    data = (
+        client().table("outreach").select("last_step")
+        .eq("contact_id", contact_id).limit(1).execute().data
+    )
+    return data[0]["last_step"] if data else None
 
 
 def update_outreach_by_contact(contact_id: int, **fields) -> None:

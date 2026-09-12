@@ -15,40 +15,59 @@ GENERIC_LAST_RESORT = {"hello", "contact"}
 # o mesmo email no mesmo dia parece spam interno e queima a marca.
 MAX_CONTACTS_PER_COMPANY = 3
 
-# Quem decide comprar um audit: técnico > fundador > operações. Cargos de
-# marketing/vendas/RH nunca entram.
-POSITION_SCORES = (
-    (("cto", "chief technology"), 100),
-    (("founder", "co-founder", "ceo", "chief executive", "owner"), 90),
-    (("head of engineering", "vp of engineering", "vp engineering",
-      "engineering lead", "tech lead", "head of security", "security lead",
-      "head of tech"), 80),
-    (("coo", "cfo", "chief"), 60),
-    (("engineer", "developer", "security", "devops", "blockchain"), 40),
-)
+# Decisor certo depende do ESTÁGIO da empresa:
+#  - early (pre-seed/seed/angel): time pequeno, quem decide é founder/CEO/CTO
+#  - growth (Series A+): founder não responde cold email; quem decide segurança
+#    é Head of Engineering/Security, VP Eng, CTO
+POSITION_SCORES = {
+    "early": (
+        (("founder", "co-founder", "ceo", "chief executive", "owner"), 100),
+        (("cto", "chief technology"), 95),
+        (("coo", "cfo", "chief"), 70),
+        (("head of engineering", "head of security", "vp of engineering",
+          "vp engineering", "tech lead", "engineering lead"), 50),
+        (("engineer", "developer", "security", "devops", "blockchain"), 30),
+    ),
+    "growth": (
+        (("head of security", "ciso", "security lead", "head of engineering",
+          "vp of engineering", "vp engineering", "engineering lead"), 100),
+        (("cto", "chief technology"), 90),
+        (("founder", "co-founder", "ceo", "chief executive"), 60),
+        (("coo", "cfo", "chief"), 50),
+        (("engineer", "developer", "security", "devops", "blockchain"), 40),
+    ),
+}
 POSITION_NEVER = ("marketing", "sales", "business development", "hr",
                   "human resources", "recruit", "talent", "community",
                   "social media", "content", "designer", "support")
 
+GROWTH_MARKERS = ("series", "extended")
 
-def score_position(position: str | None) -> int:
+
+def stage_for_round(round_type: str | None) -> str:
+    """'Seed'/'Pre-Seed'/'Angel'/desconhecido → early; 'Series A+'/'Extended' → growth."""
+    r = (round_type or "").lower()
+    return "growth" if any(m in r for m in GROWTH_MARKERS) else "early"
+
+
+def score_position(position: str | None, stage: str = "early") -> int:
     """0 = nunca abordar; quanto maior, mais prioridade. Sem cargo = 10 (neutro)."""
     if not position:
         return 10
     p = position.lower()
     if any(bad in p for bad in POSITION_NEVER):
         return 0
-    for keywords, score in POSITION_SCORES:
+    for keywords, score in POSITION_SCORES[stage]:
         if any(k in p for k in keywords):
             return score
     return 10
 
 
-def select_ready(candidates: list[dict]) -> list[dict]:
+def select_ready(candidates: list[dict], stage: str = "early") -> list[dict]:
     """Dos candidatos elegíveis, escolhe os até MAX_CONTACTS_PER_COMPANY melhores
-    por (score de cargo, confidence). Cargo com score 0 nunca entra."""
-    scored = [c for c in candidates if score_position(c.get("position")) > 0]
-    scored.sort(key=lambda c: (score_position(c.get("position")),
+    por (score de cargo no estágio, confidence). Score 0 nunca entra."""
+    scored = [c for c in candidates if score_position(c.get("position"), stage) > 0]
+    scored.sort(key=lambda c: (score_position(c.get("position"), stage),
                                c.get("confidence") or 0), reverse=True)
     return scored[:MAX_CONTACTS_PER_COMPANY]
 
@@ -62,8 +81,12 @@ def searches_available() -> int:
     return resp.json()["data"]["requests"]["searches"]["available"]
 
 
-def domain_search(domain: str | None = None, company: str | None = None) -> dict:
-    """Busca por domínio OU por nome da empresa (o Hunter resolve o domínio)."""
+def domain_search(domain: str | None = None, company: str | None = None,
+                  seniority: str | None = None) -> dict:
+    """Busca por domínio OU por nome (o Hunter resolve o domínio).
+
+    `seniority` (ex.: 'executive' ou 'executive,senior') filtra na origem —
+    a mesma busca devolve decisores em vez de 10 emails aleatórios."""
     params = {"api_key": env("HUNTER_API_KEY"), "limit": 10}
     if domain:
         params["domain"] = domain
@@ -71,6 +94,8 @@ def domain_search(domain: str | None = None, company: str | None = None) -> dict
         params["company"] = company
     else:
         raise ValueError("domain_search precisa de domain ou company")
+    if seniority:
+        params["seniority"] = seniority
     resp = http_call("GET", DOMAIN_SEARCH_URL, step="enrich_contacts", params=params)
     resp.raise_for_status()
     return resp.json()["data"]
@@ -98,7 +123,14 @@ def enrich_company(company: dict) -> int:
     Sem domínio (CryptoRank bloqueou a resolução), busca pelo NOME — o Hunter
     resolve o domínio e a gente grava de volta na empresa.
     """
-    data = domain_search(domain=company.get("domain"), company=company["name"])
+    stage = stage_for_round(company.get("category"))
+    seniority = "executive" if stage == "early" else "executive,senior"
+    data = domain_search(domain=company.get("domain"), company=company["name"],
+                         seniority=seniority)
+    # Filtro de seniority pode zerar a busca em time muito pequeno: refaz sem filtro
+    if not data.get("emails"):
+        data = domain_search(domain=company.get("domain") or data.get("domain"),
+                             company=company["name"])
 
     country = data.get("country")
     updates: dict = {}
@@ -118,7 +150,7 @@ def enrich_company(company: dict) -> int:
 
     # 1º passo: elegibilidade (regras de genérico/confidence); 2º: top N por cargo
     eligible = [e for e in emails if classify_email(e, has_nominal) == "ready"]
-    chosen = {e["value"] for e in select_ready(eligible)}
+    chosen = {e["value"] for e in select_ready(eligible, stage)}
 
     ready = 0
     for e in emails:

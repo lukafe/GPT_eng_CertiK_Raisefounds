@@ -1,23 +1,18 @@
-name: Daily outbound
+name: Sync status (6h)
 
-# Produção: roda todo dia às 06:00 UTC (healthcheck + pipeline completo).
-# Também pode ser disparado na mão pela aba Actions.
+# 24/7: sincroniza status do Apollo (replies/bounces/follow-ups) a cada 6h
+# e envia notificação por email quando há movimento.
 on:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 */6 * * *"
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Dry-run (não envia nada ao Apollo)"
-        type: boolean
-        default: false
 
 concurrency:
   group: outbound-pipeline
   cancel-in-progress: false
 
 jobs:
-  run:
+  sync:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,29 +23,15 @@ jobs:
       HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
       APOLLO_KEY: ${{ secrets.APOLLO_KEY }}
       APOLLO_SEQ_ID: ${{ secrets.APOLLO_SEQ_ID }}
-      APOLLO_MAILBOX_ID: ${{ secrets.APOLLO_MAILBOX_ID }}
       NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-      MAX_PER_DAY: "40"
-      COMPANIES_PER_DAY: "4"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-
-      - name: Healthcheck (aborta o dia se alguma API estiver fora)
-        run: python healthcheck.py
-
-      - name: Pipeline
-        run: |
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            python main.py --dry-run
-          else
-            python main.py
-          fi
-
+      - run: python main.py --steps sync
       - name: Log da rodada
         if: always()
         run: cat log.txt 2>/dev/null || true

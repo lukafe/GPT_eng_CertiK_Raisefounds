@@ -25,9 +25,12 @@ def run_step(name: str, fn) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="pula o push ao Apollo")
+    parser.add_argument("--steps", default="fetch,enrich,push,sync",
+                        help="etapas a rodar (ex.: --steps fetch | --steps sync)")
     args = parser.parse_args()
+    steps = {s.strip() for s in args.steps.split(",") if s.strip()}
 
-    log("main", f"início (dry_run={args.dry_run})")
+    log("main", f"início (dry_run={args.dry_run}, steps={sorted(steps)})")
 
     import apollo
     import db
@@ -40,14 +43,18 @@ def main() -> None:
         return
 
     try:
-        run_step("fetch_raises", telegram_cryptorank.fetch_raises)
-        run_step("enrich_contacts", hunter.enrich_contacts)
+        if "fetch" in steps:
+            run_step("fetch_raises", telegram_cryptorank.fetch_raises)
+        if "enrich" in steps:
+            run_step("enrich_contacts", hunter.enrich_contacts)
 
         if args.dry_run:
             log("main", "dry-run: push_to_apollo e sync_status pulados")
         else:
-            run_step("push_to_apollo", apollo.push_to_apollo)
-            run_step("sync_status", apollo.sync_status)
+            if "push" in steps:
+                run_step("push_to_apollo", apollo.push_to_apollo)
+            if "sync" in steps:
+                run_step("sync_status", apollo.sync_status)
     finally:
         db.release_lock()
 
