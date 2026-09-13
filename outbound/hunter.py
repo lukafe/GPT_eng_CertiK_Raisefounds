@@ -8,7 +8,10 @@ ACCOUNT_URL = "https://api.hunter.io/v2/account"
 DOMAIN_SEARCH_URL = "https://api.hunter.io/v2/domain-search"
 
 MIN_CONFIDENCE = 50
-GENERIC_SKIP = {"info", "support", "press", "noreply", "no-reply"}
+GENERIC_SKIP = {"info", "support", "press", "noreply", "no-reply", "media",
+                "marketing", "investors", "sales", "admin", "team", "jobs",
+                "careers", "legal", "billing", "pr", "office", "gm", "help",
+                "partnerships", "business", "bd"}
 GENERIC_LAST_RESORT = {"hello", "contact"}
 
 # Máximo de contatos abordados por empresa: 10 pessoas da mesma empresa recebendo
@@ -130,13 +133,17 @@ def is_nominal(email_item: dict) -> bool:
 
 
 def classify_email(email_item: dict, has_nominal: bool) -> str:
-    """'ready' ou 'skipped', conforme regras do spec."""
+    """'ready' ou 'skipped'. Email sem NOME de pessoa é tratado como genérico:
+    só entra como último recurso (hello@/contact@) quando não há ninguém nominal."""
     local = (email_item.get("value") or "").split("@")[0].lower()
     if local in GENERIC_SKIP:
         return "skipped"
     if local in GENERIC_LAST_RESORT:
         return "skipped" if has_nominal else "ready"
     if (email_item.get("confidence") or 0) < MIN_CONFIDENCE:
+        return "skipped"
+    if not is_nominal(email_item):
+        # caixa sem dono identificado (ex.: ops@, gm@, apelidos) → não abordar
         return "skipped"
     return "ready"
 

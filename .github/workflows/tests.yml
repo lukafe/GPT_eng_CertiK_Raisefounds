@@ -15,6 +15,7 @@ on:
           - dry-run        # main.py --dry-run (popula o banco, não envia email)
           - email-real     # coloca o PRÓPRIO Lucas na sequência: envia email DE VERDADE
           - dump-db        # imprime estado do banco (debug, custo zero)
+          - cleanup-sequence  # EMERGÊNCIA: remove todos os in_sequence do Apollo
       test_email:
         description: "Só para email-real: o email que vai receber o teste"
         type: string
@@ -68,6 +69,10 @@ jobs:
       - name: Dump do banco (debug)
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'dump-db'
         run: python dump_db.py
+
+      - name: Limpeza de emergência da sequência
+        if: github.event_name == 'workflow_dispatch' && inputs.suite == 'cleanup-sequence'
+        run: python cleanup_sequence.py
 
       - name: Log da rodada
         if: always()
