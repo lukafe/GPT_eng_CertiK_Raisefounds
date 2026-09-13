@@ -14,6 +14,7 @@ on:
           - live-full      # + Hunter e Apollo (consome 1 busca do Hunter)
           - dry-run        # main.py --dry-run (popula o banco, não envia email)
           - email-real     # coloca o PRÓPRIO Lucas na sequência: envia email DE VERDADE
+          - dump-db        # imprime estado do banco (debug, custo zero)
       test_email:
         description: "Só para email-real: o email que vai receber o teste"
         type: string
@@ -63,6 +64,10 @@ jobs:
         env:
           APOLLO_TEST_EMAIL: ${{ inputs.test_email }}
         run: python send_test_email.py
+
+      - name: Dump do banco (debug)
+        if: github.event_name == 'workflow_dispatch' && inputs.suite == 'dump-db'
+        run: python dump_db.py
 
       - name: Log da rodada
         if: always()
