@@ -15,61 +15,80 @@ GENERIC_LAST_RESORT = {"hello", "contact"}
 # o mesmo email no mesmo dia parece spam interno e queima a marca.
 MAX_CONTACTS_PER_COMPANY = 3
 
-# Decisor certo depende do ESTÁGIO da empresa:
-#  - early (pre-seed/seed/angel): time pequeno, quem decide é founder/CEO/CTO
-#  - growth (Series A+): founder não responde cold email; quem decide segurança
-#    é Head of Engineering/Security, VP Eng, CTO
-POSITION_SCORES = {
-    "early": (
-        (("founder", "co-founder", "ceo", "chief executive", "owner"), 100),
-        (("cto", "chief technology"), 95),
-        (("coo", "cfo", "chief"), 70),
-        (("head of engineering", "head of security", "vp of engineering",
-          "vp engineering", "tech lead", "engineering lead"), 50),
-        (("engineer", "developer", "security", "devops", "blockchain"), 30),
-    ),
-    "growth": (
-        (("head of security", "ciso", "security lead", "head of engineering",
-          "vp of engineering", "vp engineering", "engineering lead"), 100),
-        (("cto", "chief technology"), 90),
-        (("founder", "co-founder", "ceo", "chief executive"), 60),
-        (("coo", "cfo", "chief"), 50),
-        (("engineer", "developer", "security", "devops", "blockchain"), 40),
-    ),
+# Decisor certo depende do TAMANHO da empresa (tier), estimado por dois sinais:
+# o tipo de rodada e quantos emails o Hunter conhece do domínio (proxy de headcount).
+#
+# Cada tier tem uma ESCADA de cargos: procura no degrau 1; se não achar (ou não
+# preencher as vagas), desce pro degrau 2, e assim por diante — fallback explícito.
+FOUNDERS = ("founder", "co-founder", "ceo", "chief executive", "owner")
+CTO = ("cto", "chief technology")
+OPS_C_LEVEL = ("coo", "cfo", "chief operating", "chief financial")
+SEC_HEADS = ("head of security", "ciso", "security lead", "chief information security")
+ENG_HEADS = ("head of engineering", "vp of engineering", "vp engineering",
+             "head of tech", "director of engineering")
+TECH_LEADS = ("tech lead", "engineering lead", "engineering manager",
+              "staff engineer", "principal engineer", "lead engineer")
+ENGINEERS = ("engineer", "developer", "security", "devops", "blockchain")
+
+TIER_LADDERS: dict[str, tuple[tuple[str, ...], ...]] = {
+    # Startup pequena: quem decide é o fundador
+    "small": (FOUNDERS, CTO, OPS_C_LEVEL, ENG_HEADS + SEC_HEADS, TECH_LEADS, ENGINEERS),
+    # Média (Series A/B): liderança técnica decide, founder ainda alcançável
+    "mid": (CTO, SEC_HEADS + ENG_HEADS, FOUNDERS, TECH_LEADS, OPS_C_LEVEL, ENGINEERS),
+    # Grande: segurança/engenharia sênior; CEO/founder fora (não responde cold)
+    "large": (SEC_HEADS, ENG_HEADS, CTO, TECH_LEADS, ENGINEERS),
 }
 POSITION_NEVER = ("marketing", "sales", "business development", "hr",
                   "human resources", "recruit", "talent", "community",
                   "social media", "content", "designer", "support")
 
-GROWTH_MARKERS = ("series", "extended")
+LATE_ROUNDS = ("series c", "series d", "series e", "series f", "series g")
+MID_ROUNDS = ("series", "extended")
 
 
-def stage_for_round(round_type: str | None) -> str:
-    """'Seed'/'Pre-Seed'/'Angel'/desconhecido → early; 'Series A+'/'Extended' → growth."""
+def tier_for(round_type: str | None, team_size: int | None) -> str:
+    """Tier pela rodada + tamanho do time (nº de emails que o Hunter conhece)."""
     r = (round_type or "").lower()
-    return "growth" if any(m in r for m in GROWTH_MARKERS) else "early"
+    size = team_size or 0
+    if any(m in r for m in LATE_ROUNDS) or size > 80:
+        return "large"
+    if any(m in r for m in MID_ROUNDS) or size > 15:
+        return "mid"
+    return "small"
 
 
-def score_position(position: str | None, stage: str = "early") -> int:
-    """0 = nunca abordar; quanto maior, mais prioridade. Sem cargo = 10 (neutro)."""
-    if not position:
-        return 10
-    p = position.lower()
-    if any(bad in p for bad in POSITION_NEVER):
-        return 0
-    for keywords, score in POSITION_SCORES[stage]:
-        if any(k in p for k in keywords):
-            return score
-    return 10
+def is_never(position: str | None) -> bool:
+    p = (position or "").lower()
+    return any(bad in p for bad in POSITION_NEVER)
 
 
-def select_ready(candidates: list[dict], stage: str = "early") -> list[dict]:
-    """Dos candidatos elegíveis, escolhe os até MAX_CONTACTS_PER_COMPANY melhores
-    por (score de cargo no estágio, confidence). Score 0 nunca entra."""
-    scored = [c for c in candidates if score_position(c.get("position"), stage) > 0]
-    scored.sort(key=lambda c: (score_position(c.get("position"), stage),
-                               c.get("confidence") or 0), reverse=True)
-    return scored[:MAX_CONTACTS_PER_COMPANY]
+def _matches(position: str | None, rung: tuple[str, ...]) -> bool:
+    p = (position or "").lower()
+    return any(k in p for k in rung)
+
+
+def select_ready(candidates: list[dict], tier: str = "small") -> list[dict]:
+    """Desce a escada do tier preenchendo até MAX_CONTACTS_PER_COMPANY vagas.
+
+    Fallback final: se a escada não preencher as vagas, completa com os
+    candidatos restantes (nominais, não-vetados) por confidence.
+    """
+    pool = [c for c in candidates if not is_never(c.get("position"))]
+    chosen: list[dict] = []
+
+    for rung in TIER_LADDERS[tier]:
+        if len(chosen) >= MAX_CONTACTS_PER_COMPANY:
+            break
+        matches = [c for c in pool if c not in chosen and _matches(c.get("position"), rung)]
+        matches.sort(key=lambda c: c.get("confidence") or 0, reverse=True)
+        chosen.extend(matches[: MAX_CONTACTS_PER_COMPANY - len(chosen)])
+
+    if len(chosen) < MAX_CONTACTS_PER_COMPANY:
+        rest = [c for c in pool if c not in chosen]
+        rest.sort(key=lambda c: c.get("confidence") or 0, reverse=True)
+        chosen.extend(rest[: MAX_CONTACTS_PER_COMPANY - len(chosen)])
+
+    return chosen
 
 
 def searches_available() -> int:
@@ -98,7 +117,12 @@ def domain_search(domain: str | None = None, company: str | None = None,
         params["seniority"] = seniority
     resp = http_call("GET", DOMAIN_SEARCH_URL, step="enrich_contacts", params=params)
     resp.raise_for_status()
-    return resp.json()["data"]
+    payload = resp.json()
+    data = payload["data"]
+    # Proxy de tamanho da empresa: total de emails que o Hunter conhece do domínio
+    data["_team_size"] = (payload.get("meta") or {}).get("results") \
+        or len(data.get("emails", []))
+    return data
 
 
 def is_nominal(email_item: dict) -> bool:
@@ -123,14 +147,14 @@ def enrich_company(company: dict) -> int:
     Sem domínio (CryptoRank bloqueou a resolução), busca pelo NOME — o Hunter
     resolve o domínio e a gente grava de volta na empresa.
     """
-    stage = stage_for_round(company.get("category"))
-    seniority = "executive" if stage == "early" else "executive,senior"
     data = domain_search(domain=company.get("domain"), company=company["name"],
-                         seniority=seniority)
+                         seniority="executive,senior")
     # Filtro de seniority pode zerar a busca em time muito pequeno: refaz sem filtro
     if not data.get("emails"):
         data = domain_search(domain=company.get("domain") or data.get("domain"),
                              company=company["name"])
+
+    tier = tier_for(company.get("category"), data.get("_team_size"))
 
     country = data.get("country")
     updates: dict = {}
@@ -148,9 +172,9 @@ def enrich_company(company: dict) -> int:
         for e in emails
     )
 
-    # 1º passo: elegibilidade (regras de genérico/confidence); 2º: top N por cargo
+    # 1º: elegibilidade (genérico/confidence); 2º: escada de cargos do tier
     eligible = [e for e in emails if classify_email(e, has_nominal) == "ready"]
-    chosen = {e["value"] for e in select_ready(eligible, stage)}
+    chosen = {e["value"] for e in select_ready(eligible, tier)}
 
     ready = 0
     for e in emails:
@@ -170,7 +194,8 @@ def enrich_company(company: dict) -> int:
     updates["status"] = "enriched" if ready else "no_contacts"
     db.update_company(company["id"], **updates)
     log("enrich_contacts", f"{company['name']} ({company['domain']}): "
-                           f"{len(emails)} emails, {ready} ready, país={country}")
+                           f"{len(emails)} emails, tier={tier} "
+                           f"(time~{data.get('_team_size')}), {ready} ready, país={country}")
     return ready
 
 

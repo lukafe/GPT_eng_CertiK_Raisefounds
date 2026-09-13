@@ -59,6 +59,22 @@ LED_BY_RE = re.compile(r"led\s+by\s+(?P<lead>[^,.]+)", re.IGNORECASE)
 
 NAME_SUFFIXES = {"labs", "lab", "protocol", "inc", "ltd", "llc", "foundation", "co"}
 
+# O canal também publica VCs anunciando NOVOS FUNDOS — não são alvo de outreach.
+VC_NAME_RE = re.compile(
+    r"\b(capital|ventures?|partners|investments?|asset management|fund)\b",
+    re.IGNORECASE,
+)
+FUND_POST_RE = re.compile(
+    r"\$[\d.,]+\s*[KMB]\s+(?:\w+\s+)?fund\b"
+    r"|\b(?:launche[sd]|close[sd]?|raise[sd]?|announce[sd]?)\s+(?:a\s+)?(?:new\s+)?fund\b",
+    re.IGNORECASE,
+)
+
+
+def is_vc_or_fund(name: str, text: str) -> bool:
+    """True se o 'raise' é na verdade um VC/fundo — nunca abordar."""
+    return bool(VC_NAME_RE.search(name or "") or FUND_POST_RE.search(text or ""))
+
 # Domínios que nunca são o site oficial do projeto
 NON_PROJECT_HOSTS = ("cryptorank.io", "t.me", "telegram", "twitter.com", "x.com",
                      "discord", "github.com", "medium.com", "linkedin.com",
@@ -281,8 +297,14 @@ def fetch_raises() -> dict:
     posts = fetch_new_raises(since)
     raises = [r for r in (parse_raise(p) for p in posts if is_raise_post(p)) if r]
 
-    created = with_domain = 0
+    created = with_domain = vcs_skipped = 0
+    posts_by_msg = {p["message_id"]: p for p in posts}
     for r in raises:
+        post_text = (posts_by_msg.get(r["source_message_id"]) or {}).get("text", "")
+        if is_vc_or_fund(r["project_name"], post_text):
+            vcs_skipped += 1
+            log("fetch_raises", f"VC/fundo ignorado: {r['project_name']}")
+            continue
         normalized = normalize_name(r["project_name"])
         if db.company_exists_by_message(r["source_message_id"]) or \
                 db.company_exists_by_name(normalized):
@@ -313,7 +335,8 @@ def fetch_raises() -> dict:
         db.set_state("last_message_id", str(max(p["message_id"] for p in posts)))
 
     detail = (f"{len(posts)} posts novos, {len(raises)} raises, "
-              f"{created} empresas criadas ({with_domain} com domínio)")
+              f"{created} empresas criadas ({with_domain} com domínio), "
+              f"{vcs_skipped} VCs/fundos ignorados")
     log("fetch_raises", detail)
     db.log_run("fetch_raises", True, detail)
     return {"posts": len(posts), "raises": len(raises),
