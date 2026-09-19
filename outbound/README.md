@@ -109,3 +109,17 @@ Opções:
 
 Taxa de resposta ≥ 3% e ≥ 2 calls marcadas → adicionar CryptoRank.
 Abaixo disso → mexer no template antes de escalar volume.
+
+## Dashboard (Vercel)
+
+Painel live em `dashboard/` (Next.js): resumo do dia + calendário com todos os
+emails (1º email, follow-up, resposta) e para quem foram. A service key do
+Supabase fica só no servidor da Vercel — nunca vai ao navegador.
+
+Deploy (uma vez):
+1. vercel.com → Add New → Project → importar este repositório.
+2. **Root Directory: `dashboard`** (Framework: Next.js, detectado sozinho).
+3. Environment Variables: `SUPABASE_URL` e `SUPABASE_SERVICE_KEY` (mesmos dos Actions).
+4. Deploy. A página atualiza sozinha a cada 5 min (ISR) e a cada push no repo.
+
+Pré-requisito no banco: migração 007 (`outbound/migrations/007_followup_at.sql`).

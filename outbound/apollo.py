@@ -204,7 +204,8 @@ def sync_status() -> dict:
                 prev = db.get_outreach_step(local["id"])
                 if prev is not None and step > prev:
                     followups.append(_label(local))
-                    db.update_outreach_by_contact(local["id"], last_step=step)
+                    db.update_outreach_by_contact(local["id"], last_step=step,
+                                                  followup_at=now)
 
             new_status = interpret_campaign_status(entry)
             if not new_status:
