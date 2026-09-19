@@ -1,4 +1,4 @@
-import { dayKey, fetchEvents, fetchSummary, timeOf } from "../lib/data";
+import { dayKey, envProblem, fetchEvents, fetchSummary, timeOf } from "../lib/data";
 
 export const revalidate = 300; // atualiza a cada 5 min
 
@@ -43,12 +43,33 @@ function shiftMonth(ym, delta) {
   return d.toISOString().slice(0, 7);
 }
 
+function Problem({ msg }) {
+  return (
+    <main className="wrap">
+      <h1>Outbound CertiK</h1>
+      <p className="sub">O dashboard não conseguiu carregar os dados.</p>
+      <div className="event" style={{ borderColor: "var(--serious)" }}>
+        <span className="chip" style={{ background: "var(--serious)" }}>erro</span>
+        <span className="meta">{msg}</span>
+      </div>
+    </main>
+  );
+}
+
 export default async function Page({ searchParams }) {
   const today = todayKey();
   const month = searchParams?.m ?? today.slice(0, 7);
   const selected = searchParams?.d ?? today;
 
-  const [events, summary] = await Promise.all([fetchEvents(), fetchSummary()]);
+  const envMsg = envProblem();
+  if (envMsg) return <Problem msg={envMsg} />;
+
+  let events, summary;
+  try {
+    [events, summary] = await Promise.all([fetchEvents(), fetchSummary()]);
+  } catch (e) {
+    return <Problem msg={`Supabase respondeu com erro: ${e.message}`} />;
+  }
 
   const byDay = new Map();
   for (const e of events) {

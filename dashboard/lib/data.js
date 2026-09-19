@@ -2,6 +2,15 @@ import { createClient } from "@supabase/supabase-js";
 
 const TZ = "America/Sao_Paulo";
 
+export function envProblem() {
+  const missing = ["SUPABASE_URL", "SUPABASE_SERVICE_KEY"]
+    .filter((k) => !process.env[k]?.trim());
+  return missing.length
+    ? `Variáveis de ambiente faltando na Vercel: ${missing.join(", ")}. ` +
+      "Adicione em Settings → Environment Variables e clique em Redeploy."
+    : null;
+}
+
 function client() {
   return createClient(
     process.env.SUPABASE_URL,
