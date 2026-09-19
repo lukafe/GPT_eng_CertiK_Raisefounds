@@ -20,6 +20,10 @@ on:
         description: "Só para email-real: o email que vai receber o teste"
         type: string
         required: false
+      cleanup_emails:
+        description: "Só para cleanup-sequence: emails/domínios a remover (vírgula); vazio = todos"
+        type: string
+        required: false
   push:
     branches: [main, claude/tender-ride-wywfs0]
 
@@ -72,6 +76,8 @@ jobs:
 
       - name: Limpeza de emergência da sequência
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'cleanup-sequence'
+        env:
+          CLEANUP_EMAILS: ${{ inputs.cleanup_emails }}
         run: python cleanup_sequence.py
 
       - name: Log da rodada

@@ -117,3 +117,22 @@ sabe quem eu sou". Sem IA, sem custo, só plumbing.
 | 3 | F1.1 (dead-man + fuzz) + F1.4 (resumo diário) | O canal VAI mudar de novo; melhor saber no dia |
 | 4 | F2.3 (filtro valor/segmento) + F2.5 (dashboard replies) | Refinar alvo com os primeiros dados reais |
 | depois | F1.3, F1.5, F2.5 completo | Robustez incremental |
+
+---
+
+## FASE 3 — Fit de serviço (implementada em 2026-09-19)
+
+Regra: **empresa sem relação com nenhum serviço da CertiK nunca recebe email.**
+Dois portões em `fit.py`:
+1. **Portão do post** (scraper, custo zero): keywords ponderadas por serviço
+   (smart_contract_audit / pentest_infra / compliance) + anti-fit pesado
+   (restaurante, veículos, moda, RH...). `fit_score < 2` ou nenhum serviço →
+   `status='no_fit'`; `raw_post`, `fit_service` e `fit_score` ficam gravados
+   para auditoria e re-classificação.
+2. **Portão da indústria** (enriquecimento): domínio resolvido pelo nome +
+   indústria do Hunter fora do universo web3/software/fintech → `no_fit`
+   (previne o caso Polaris Inc./Pons).
+
+Evolução futura: substituir keywords por classificação via LLM (1 chamada
+barata por empresa) quando o volume justificar; calibrar o limiar com os
+`fit_score` acumulados no banco.

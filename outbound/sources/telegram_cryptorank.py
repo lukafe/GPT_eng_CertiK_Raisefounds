@@ -297,7 +297,9 @@ def fetch_raises() -> dict:
     posts = fetch_new_raises(since)
     raises = [r for r in (parse_raise(p) for p in posts if is_raise_post(p)) if r]
 
-    created = with_domain = vcs_skipped = 0
+    from fit import classify_fit
+
+    created = with_domain = vcs_skipped = no_fit = 0
     posts_by_msg = {p["message_id"]: p for p in posts}
     for r in raises:
         post_text = (posts_by_msg.get(r["source_message_id"]) or {}).get("text", "")
@@ -309,7 +311,15 @@ def fetch_raises() -> dict:
         if db.company_exists_by_message(r["source_message_id"]) or \
                 db.company_exists_by_name(normalized):
             continue
-        website = resolve_website(r["cryptorank_url"])
+
+        # PORTÃO 1 de fit: nenhum serviço da CertiK se aplica → nunca abordar
+        fit_service, fit_score = classify_fit(post_text)
+        if fit_service is None:
+            no_fit += 1
+            log("fetch_raises", f"sem fit de serviço (score={fit_score}): "
+                                f"{r['project_name']}")
+
+        website = resolve_website(r["cryptorank_url"]) if fit_service else None
         domain = domain_from_url(website)
         row = {
             "name": r["project_name"],
@@ -323,8 +333,11 @@ def fetch_raises() -> dict:
             "source_message_id": r["source_message_id"],
             "source_url": r["source_url"],
             "cryptorank_url": r["cryptorank_url"],
+            "raw_post": post_text[:2000],
+            "fit_service": fit_service,
+            "fit_score": fit_score,
             # Sem domínio também entra na fila: o Hunter resolve pelo nome
-            "status": "queued",
+            "status": "queued" if fit_service else "no_fit",
         }
         db.insert_company(row)
         created += 1
@@ -336,7 +349,7 @@ def fetch_raises() -> dict:
 
     detail = (f"{len(posts)} posts novos, {len(raises)} raises, "
               f"{created} empresas criadas ({with_domain} com domínio), "
-              f"{vcs_skipped} VCs/fundos ignorados")
+              f"{vcs_skipped} VCs/fundos ignorados, {no_fit} sem fit")
     log("fetch_raises", detail)
     db.log_run("fetch_raises", True, detail)
     return {"posts": len(posts), "raises": len(raises),

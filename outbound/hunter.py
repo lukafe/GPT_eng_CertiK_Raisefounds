@@ -161,6 +161,17 @@ def enrich_company(company: dict) -> int:
         data = domain_search(domain=company.get("domain") or data.get("domain"),
                              company=company["name"])
 
+    # PORTÃO 2 de fit: domínio resolvido pelo NOME pode ter caído na empresa
+    # errada (caso Polaris Inc.) — a indústria do Hunter denuncia.
+    from fit import industry_fit
+
+    industry = data.get("industry")
+    if not company.get("domain") and not industry_fit(industry):
+        db.update_company(company["id"], status="no_fit")
+        log("enrich_contacts", f"{company['name']}: indústria fora do universo "
+                               f"CertiK ('{industry}') — no_fit, nenhum contato")
+        return 0
+
     tier = tier_for(company.get("category"), data.get("_team_size"))
 
     country = data.get("country")
