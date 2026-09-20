@@ -1,13 +1,13 @@
 import { dayKey, envProblem, fetchEvents, fetchSummary, timeOf } from "../lib/data";
 
-export const revalidate = 300; // atualiza a cada 5 min
+export const revalidate = 300; // refreshes every 5 min
 
 const TYPE = {
-  reachout: { label: "1º email", cssVar: "var(--reachout)" },
+  reachout: { label: "First email", cssVar: "var(--reachout)" },
   followup: { label: "Follow-up", cssVar: "var(--followup)" },
-  reply: { label: "Resposta", cssVar: "var(--reply)" },
+  reply: { label: "Reply", cssVar: "var(--reply)" },
 };
-const DOWS = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"];
+const DOWS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function todayKey() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -46,10 +46,10 @@ function shiftMonth(ym, delta) {
 function Problem({ msg }) {
   return (
     <main className="wrap">
-      <h1>Outbound CertiK</h1>
-      <p className="sub">O dashboard não conseguiu carregar os dados.</p>
+      <div className="brand"><span className="mark" /><h1>CertiK Outbound</h1></div>
+      <p className="sub">The dashboard could not load its data.</p>
       <div className="event" style={{ borderColor: "var(--serious)" }}>
-        <span className="chip" style={{ background: "var(--serious)" }}>erro</span>
+        <span className="chip" style={{ background: "var(--serious)" }}>error</span>
         <span className="meta">{msg}</span>
       </div>
     </main>
@@ -68,7 +68,7 @@ export default async function Page({ searchParams }) {
   try {
     [events, summary] = await Promise.all([fetchEvents(), fetchSummary()]);
   } catch (e) {
-    return <Problem msg={`Supabase respondeu com erro: ${e.message}`} />;
+    return <Problem msg={`Supabase returned an error: ${e.message}`} />;
   }
 
   const byDay = new Map();
@@ -81,28 +81,28 @@ export default async function Page({ searchParams }) {
   const dayEvents = byDay.get(selected) ?? [];
   const countOf = (list, t) => list.filter((e) => e.type === t).length;
 
-  const monthLabel = new Intl.DateTimeFormat("pt-BR", {
+  const monthLabel = new Intl.DateTimeFormat("en-US", {
     timeZone: "UTC", month: "long", year: "numeric",
   }).format(new Date(`${month}-01T12:00:00Z`));
 
   return (
     <main className="wrap">
-      <h1>Outbound CertiK</h1>
-      <p className="sub">Resumo diário e calendário de emails enviados · atualiza a cada 5 min</p>
+      <div className="brand"><span className="mark" /><h1>CertiK Outbound</h1></div>
+      <p className="sub">Daily summary & send calendar · auto-refreshes every 5 min</p>
 
       <div className="tiles">
-        <div className="tile"><div className="n">{countOf(todayEvents, "reachout")}</div><div className="l">1º emails hoje</div></div>
-        <div className="tile"><div className="n">{countOf(todayEvents, "followup")}</div><div className="l">follow-ups hoje</div></div>
-        <div className="tile"><div className="n">{countOf(todayEvents, "reply")}</div><div className="l">respostas hoje</div></div>
-        <div className="tile"><div className="n">{summary.inSequence}</div><div className="l">em sequência</div></div>
-        <div className="tile"><div className="n">{summary.replied}</div><div className="l">respostas (total)</div></div>
-        <div className="tile"><div className="n">{summary.queued}</div><div className="l">empresas na fila</div></div>
+        <div className="tile"><div className="n">{countOf(todayEvents, "reachout")}</div><div className="l">first emails today</div></div>
+        <div className="tile"><div className="n">{countOf(todayEvents, "followup")}</div><div className="l">follow-ups today</div></div>
+        <div className="tile"><div className="n">{countOf(todayEvents, "reply")}</div><div className="l">replies today</div></div>
+        <div className="tile"><div className="n">{summary.inSequence}</div><div className="l">in sequence</div></div>
+        <div className="tile"><div className="n">{summary.replied}</div><div className="l">total replies</div></div>
+        <div className="tile"><div className="n">{summary.queued}</div><div className="l">companies queued</div></div>
       </div>
 
       <div className="calhead">
-        <a href={`?m=${shiftMonth(month, -1)}&d=${selected}`}>← anterior</a>
+        <a href={`?m=${shiftMonth(month, -1)}&d=${selected}`}>← previous</a>
         <span className="m">{monthLabel}</span>
-        <a href={`?m=${shiftMonth(month, 1)}&d=${selected}`}>próximo →</a>
+        <a href={`?m=${shiftMonth(month, 1)}&d=${selected}`}>next →</a>
       </div>
 
       <div className="legend">
@@ -136,10 +136,10 @@ export default async function Page({ searchParams }) {
 
       <div className="list">
         <h2>
-          {selected === today ? "Hoje" : selected.split("-").reverse().join("/")}
-          {" · "}{dayEvents.length} evento(s)
+          {selected === today ? "Today" : selected}
+          {" · "}{dayEvents.length} event(s)
         </h2>
-        {dayEvents.length === 0 && <p className="empty">Nenhum email neste dia.</p>}
+        {dayEvents.length === 0 && <p className="empty">No emails on this day.</p>}
         {dayEvents.map((e, i) => (
           <div className="event" key={i}>
             <span className="chip" style={{ background: TYPE[e.type].cssVar }}>{TYPE[e.type].label}</span>

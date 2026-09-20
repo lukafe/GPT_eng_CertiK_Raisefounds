@@ -6,8 +6,8 @@ export function envProblem() {
   const missing = ["SUPABASE_URL", "SUPABASE_SERVICE_KEY"]
     .filter((k) => !process.env[k]?.trim());
   return missing.length
-    ? `Variáveis de ambiente faltando na Vercel: ${missing.join(", ")}. ` +
-      "Adicione em Settings → Environment Variables e clique em Redeploy."
+    ? `Missing environment variables on Vercel: ${missing.join(", ")}. ` +
+      "Add them in Settings → Environment Variables and click Redeploy."
     : null;
 }
 
