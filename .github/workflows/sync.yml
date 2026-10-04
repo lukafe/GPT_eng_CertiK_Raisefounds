@@ -40,7 +40,7 @@ jobs:
       - name: Sync de status do Apollo
         run: python main.py --steps sync
       - name: Estado do Apollo para o monitor
-        if: always()
+        if: ${{ !cancelled() }}
         run: python monitor_refresh.py
       - name: Log da rodada
         if: always()

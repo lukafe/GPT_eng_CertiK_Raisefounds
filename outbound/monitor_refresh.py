@@ -29,11 +29,20 @@ def fetch_profile() -> dict:
     return resp.json()
 
 
-def fetch_sequences() -> list[dict]:
-    resp = http_call("POST", f"{API}/emailer_campaigns/search", step=STEP,
-                     headers=apollo.headers(), json={"page": 1, "per_page": 50})
-    resp.raise_for_status()
-    return resp.json().get("emailer_campaigns", [])
+def fetch_sequences(max_pages: int = 5) -> list[dict]:
+    """Todas as sequências do time (paginado). É uma busca: não altera nada no Apollo."""
+    out: list[dict] = []
+    for page in range(1, max_pages + 1):
+        resp = http_call("POST", f"{API}/emailer_campaigns/search", step=STEP,
+                         headers=apollo.headers(), json={"page": page, "per_page": 100})
+        resp.raise_for_status()
+        data = resp.json()
+        batch = data.get("emailer_campaigns", [])
+        out.extend(batch)
+        total_pages = int((data.get("pagination") or {}).get("total_pages") or 1)
+        if not batch or page >= total_pages:
+            break
+    return out
 
 
 # --- resumo (funções puras, testadas offline) ------------------------------------
@@ -66,6 +75,7 @@ def mailbox_summary(accounts: list[dict], mailbox_id: str | None) -> dict:
     return {
         "found": True,
         "id": str(chosen.get("id")),
+        "user_id": chosen.get("user_id"),
         "email": chosen.get("email"),
         "active": chosen.get("active") is not False,
         "last_synced_at": chosen.get("last_synced_at"),
@@ -113,7 +123,10 @@ def build_payload(profile: dict | None, accounts: list[dict], campaigns: list[di
     """→ (linha de integrations.apollo, colunas live_* da conta de email)."""
     credits = credit_summary(profile)
     mailbox = mailbox_summary(accounts, mailbox_id)
-    seqs = [sequence_summary(c) for c in campaigns if not c.get("archived")]
+    # só as sequências do dono da caixa (num time com mais gente, as dos colegas ficam de fora)
+    owner = mailbox.get("user_id")
+    seqs = [sequence_summary(c) for c in campaigns
+            if not c.get("archived") and (not owner or not c.get("user_id") or c.get("user_id") == owner)]
     alerts = sequence_alerts(seqs, current_id)
     current = next((s for s in seqs if s["id"] == current_id), None)
 
@@ -190,6 +203,11 @@ def main() -> int:
             db.client().table("integrations").update(
                 {"status": "erro", "note": f"Falha ao consultar o Apollo: {str(e)[:160]}", "checked_at": now}
             ).eq("id", "apollo").execute()
+            # sem leitura nova, a caixa não pode continuar aparecendo como "ok"
+            db.client().table("channel_accounts").update(
+                {"live_status": "atencao", "live_note": "Não consegui conferir a caixa no Apollo nesta rodada",
+                 "live_checked_at": now}
+            ).eq("id", EMAIL_ACCOUNT_ID).execute()
         except Exception:  # noqa: BLE001
             pass
         return 1
