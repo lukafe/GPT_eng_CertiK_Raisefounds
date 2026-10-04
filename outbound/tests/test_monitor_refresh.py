@@ -29,7 +29,7 @@ def test_payload_with_paid_plan_and_both_sequences():
     assert integ["note"] == "Plano pago · 2.530 de 2.530 créditos de lead · 2 sequência(s) ativa(s)"
     alerts = integ["data"]["alerts"]
     assert any("v2" in a and "sem exclusões" in a for a in alerts)
-    assert any("Bounce de 18%" in a and "Raise outreach" in a for a in alerts)
+    assert "Bounce de 18% na sequência “Raise outreach”" in alerts
     assert integ["status"] == "atencao"
     assert live["live_status"] == "ok"
     assert live["live_note"] == ("Caixa ativa no Apollo (lucas.ceccon@certik.com) · inscrições vão para "
@@ -48,18 +48,18 @@ def test_inactive_or_missing_mailbox_is_error():
     off = [{**ACCOUNTS[0], "active": False}]
     integ, live = mr.build_payload(PROFILE, off, [OLD], None, OLD["id"], 40, False)
     assert integ["status"] == "erro" and live["live_status"] == "erro"
-    assert integ["data"]["alerts"][0].startswith("A caixa lucas.ceccon@certik.com está desativada")
+    assert integ["data"]["alerts"][0] == "A caixa lucas.ceccon@certik.com está desativada"
 
     integ, live = mr.build_payload(PROFILE, ACCOUNTS, [OLD], "outra-caixa", OLD["id"], 40, False)
     assert integ["status"] == "erro"
-    assert integ["data"]["alerts"][0] == "A caixa de envio configurada não aparece no Apollo"
+    assert integ["data"]["alerts"][0] == "A caixa de envio configurada não aparece"
 
 
 def test_current_sequence_inactive_or_missing():
     alerts = mr.sequence_alerts([mr.sequence_summary({**OLD, "active": False})], OLD["id"])
     assert any("está desativada" in a for a in alerts)
     alerts = mr.sequence_alerts([mr.sequence_summary(OLD)], "inexistente")
-    assert "A sequência configurada para inscrições não aparece no Apollo" in alerts
+    assert "A sequência configurada para inscrições não aparece" in alerts
 
 
 def test_bounce_alert_needs_sample():
@@ -78,7 +78,7 @@ def test_credits_missing_or_low():
     low = {"effective_num_lead_credits": 2530, "num_lead_credits_used": 2480}
     assert mr.credit_summary(low)["lead_left"] == 50
     integ, _ = mr.build_payload(low, ACCOUNTS, [], None, None, 40, False)
-    assert "Só 50 créditos de lead no Apollo" in integ["data"]["alerts"]
+    assert "Só 50 créditos de lead" in integ["data"]["alerts"]
 
 
 def test_main_writes_and_logs(monkeypatch):

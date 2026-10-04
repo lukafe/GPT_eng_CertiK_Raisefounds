@@ -96,14 +96,14 @@ def sequence_alerts(seqs: list[dict], current_id: str | None) -> list[str]:
         if s["archived"]:
             continue
         if s["active"] and s["excluded_stages"] == 0:
-            alerts.append(f"A sequência “{s['name']}” está ativa no Apollo sem exclusões de estágio")
+            alerts.append(f"A sequência “{s['name']}” está ativa sem exclusões de estágio")
         if s["id"] == current_id and not s["active"]:
-            alerts.append(f"A sequência que recebe inscrições (“{s['name']}”) está desativada no Apollo")
+            alerts.append(f"A sequência que recebe inscrições (“{s['name']}”) está desativada")
         sample = s["delivered"] + s["bounced"]
         if sample >= BOUNCE_MIN_SAMPLE and s["bounce_rate"] > BOUNCE_ALERT:
-            alerts.append(f"Bounce de {s['bounce_rate']:.0%} na sequência “{s['name']}” (Apollo)")
+            alerts.append(f"Bounce de {s['bounce_rate']:.0%} na sequência “{s['name']}”")
     if current_id and not any(s["id"] == current_id for s in seqs):
-        alerts.append("A sequência configurada para inscrições não aparece no Apollo")
+        alerts.append("A sequência configurada para inscrições não aparece")
     return alerts
 
 
@@ -118,11 +118,11 @@ def build_payload(profile: dict | None, accounts: list[dict], campaigns: list[di
     current = next((s for s in seqs if s["id"] == current_id), None)
 
     if not mailbox["found"]:
-        alerts.insert(0, "A caixa de envio configurada não aparece no Apollo")
+        alerts.insert(0, "A caixa de envio configurada não aparece")
     elif not mailbox["active"]:
-        alerts.insert(0, f"A caixa {mailbox['email']} está desativada no Apollo")
+        alerts.insert(0, f"A caixa {mailbox['email']} está desativada")
     if isinstance(credits["lead_left"], (int, float)) and credits["lead_left"] < LOW_CREDITS:
-        alerts.append(f"Só {_num(credits['lead_left'])} créditos de lead no Apollo")
+        alerts.append(f"Só {_num(credits['lead_left'])} créditos de lead")
 
     mailbox_ok = mailbox["found"] and mailbox["active"]
     status = "erro" if not mailbox_ok else ("atencao" if alerts else "ok")
