@@ -59,6 +59,63 @@ def get_sequence(seq_id: str) -> dict:
     return resp.json()
 
 
+def current_seq_id() -> str:
+    """Sequência que recebe as inscrições novas. source_state.apollo_seq_id permite trocar
+    de sequência pelo Supabase, sem mexer no secret do GitHub; sem ela vale APOLLO_SEQ_ID."""
+    return (db.get_state("apollo_seq_id") or "").strip() or env("APOLLO_SEQ_ID")
+
+
+# --- trava de bounce e rampa de volume -------------------------------------------
+
+BOUNCE_PAUSE_PCT = 0.03       # acima disso, pausa inscrições novas sozinho
+BOUNCE_MIN_SAMPLE = 20        # mínimo de inscritos em 7 dias para a taxa valer
+RAMP_STEPS = (20, 50, 100)    # degraus da rampa (teto diário)
+RAMP_ADVANCE_MAX_BOUNCE = 0.02
+
+
+def bounce_guard() -> str | None:
+    """Liga source_state.push_paused se o bounce dos inscritos nos últimos 7 dias for ≥ 3%.
+    Devolve o motivo quando pausa; None quando está tudo bem."""
+    sent, bounced = db.outreach_stats(days=7)
+    if sent < BOUNCE_MIN_SAMPLE or bounced / sent < BOUNCE_PAUSE_PCT:
+        return None
+    db.set_state("push_paused", "true")
+    return (f"bounce de {bounced / sent:.1%} nos últimos 7 dias ({bounced}/{sent}), acima de 3%: "
+            f"inscrições novas pausadas automaticamente")
+
+
+def daily_cap() -> int:
+    """Teto do dia: o menor entre MAX_PER_DAY (workflow) e o degrau da rampa
+    (source_state.email_daily_cap), quando existe."""
+    env_cap = int(env("MAX_PER_DAY", required=False, default="40"))
+    raw = (db.get_state("email_daily_cap") or "").strip()
+    return min(env_cap, int(raw)) if raw.isdigit() else env_cap
+
+
+def maybe_advance_ramp() -> str | None:
+    """Rampa 20 → 50 → 100/dia. Só age com source_state.email_ramp = 'on'.
+
+    Sobe um degrau quando os últimos 7 dias encheram o teto (≥ 5× o teto em inscrições)
+    com bounce abaixo de 2%. Nunca passa do MAX_PER_DAY do workflow, que é o limite do Lucas.
+    """
+    if (db.get_state("email_ramp") or "").strip().lower() != "on":
+        return None
+    raw = (db.get_state("email_daily_cap") or "").strip()
+    if not raw.isdigit():
+        db.set_state("email_daily_cap", str(RAMP_STEPS[0]))
+        return f"rampa ligada: teto inicial de {RAMP_STEPS[0]}/dia"
+    cap = int(raw)
+    sent, bounced = db.outreach_stats(days=7)
+    nxt = next((s for s in RAMP_STEPS if s > cap), None)
+    if nxt is None or sent < cap * 5 or bounced / sent >= RAMP_ADVANCE_MAX_BOUNCE:
+        return None
+    nxt = min(nxt, int(env("MAX_PER_DAY", required=False, default="40")))
+    if nxt <= cap:
+        return None
+    db.set_state("email_daily_cap", str(nxt))
+    return f"rampa: teto sobe de {cap} para {nxt}/dia (7 dias: {sent} inscritos, bounce {bounced / sent:.1%})"
+
+
 def create_contact(contact: dict, company: dict) -> str:
     """POST /contacts → apollo contact id."""
     resp = http_call("POST", f"{BASE}/contacts", step="push_to_apollo",
@@ -173,8 +230,19 @@ def push_to_apollo() -> dict:
         db.log_run("push_to_apollo", True, detail)
         return {"pushed": 0, "candidates": 0, "paused": True}
 
-    max_per_day = int(env("MAX_PER_DAY", required=False, default="40"))
-    seq_id = env("APOLLO_SEQ_ID")
+    guard = bounce_guard()
+    if guard:
+        log("push_to_apollo", guard)
+        db.log_run("push_to_apollo", False, guard)
+        return {"pushed": 0, "candidates": 0, "paused": True, "reason": "bounce"}
+
+    ramp = maybe_advance_ramp()
+    if ramp:
+        log("push_to_apollo", ramp)
+        db.log_run("push_to_apollo", True, ramp)
+
+    max_per_day = daily_cap()
+    seq_id = current_seq_id()
     mailbox_id = resolve_mailbox_id()
 
     # Teto diário real: desconta o que já entrou em sequência hoje (rodada dupla)
@@ -224,7 +292,7 @@ def push_to_apollo() -> dict:
 
 def sync_status() -> dict:
     """Etapa 4: Apollo → contacts/outreach (replied / bounced / finished)."""
-    seq_id = env("APOLLO_SEQ_ID")
+    seq_ids = {str(s) for s in db.outreach_sequence_ids()} | {str(current_seq_id())}
     in_seq = db.contacts_by_status("in_sequence")
     if not in_seq:
         db.log_run("sync_status", True, "nenhum contato in_sequence")
@@ -243,7 +311,7 @@ def sync_status() -> dict:
         if not local:
             continue
         for entry in remote.get("contact_campaign_statuses", []):
-            if str(entry.get("emailer_campaign_id")) != str(seq_id):
+            if str(entry.get("emailer_campaign_id")) not in seq_ids:
                 continue
 
             # Follow-up: o step atual avançou desde o último sync (shape tolerante)
@@ -273,12 +341,15 @@ def sync_status() -> dict:
     # Fonte confiável de bounce/resposta: as mensagens da sequência. Corrige também
     # contatos que o passo acima marcou como "finished" mas que, na verdade,
     # deram bounce ou responderam.
-    try:
-        outcomes = outcomes_by_contact(search_sequence_messages(seq_id))
-    except Exception as e:  # noqa: BLE001
-        outcomes = {}
-        log("sync_status", f"falha ao ler mensagens da sequência: {e}")
-        db.log_run("sync_status", False, f"emailer_messages/search: {e}")
+    outcomes: dict[str, str] = {}
+    for sid in sorted(seq_ids):
+        try:
+            for cid, outcome in outcomes_by_contact(search_sequence_messages(sid)).items():
+                if outcome == "bounced" or cid not in outcomes:
+                    outcomes[cid] = outcome
+        except Exception as e:  # noqa: BLE001
+            log("sync_status", f"falha ao ler mensagens da sequência {sid}: {e}")
+            db.log_run("sync_status", False, f"emailer_messages/search {sid}: {e}")
     if outcomes:
         candidates = db.contacts_by_status("in_sequence") + db.contacts_by_status("finished")
         for local in candidates:

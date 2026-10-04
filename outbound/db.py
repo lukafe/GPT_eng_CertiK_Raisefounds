@@ -117,6 +117,23 @@ def companies_by_status(status: str, require_domain: bool = False, limit: int | 
     return q.execute().data
 
 
+def companies_for_apollo_retry(limit: int, since: str):
+    """Empresas que o Hunter deixou sem contato e o Apollo ainda não tentou
+    (raise a partir de `since`), mais recentes primeiro."""
+    if limit <= 0:
+        return []
+    return (
+        client().table("companies").select("*")
+        .eq("status", "no_contacts")
+        .is_("apollo_enriched_at", "null")
+        .not_.is_("fit_service", "null")
+        .gte("raise_date", since)
+        .order("raise_date", desc=True)
+        .limit(limit)
+        .execute().data
+    )
+
+
 def update_company(company_id: int, **fields) -> None:
     client().table("companies").update(fields).eq("id", company_id).execute()
 
@@ -193,6 +210,38 @@ def insert_outreach(contact_id: int, sequence_id: str) -> None:
     client().table("outreach").insert(
         {"contact_id": contact_id, "sequence_id": sequence_id, "last_step": 1}
     ).execute()
+
+
+def outreach_sequence_ids() -> list[str]:
+    """Sequências do Apollo que já receberam alguém (para o sync seguir a antiga e a nova).
+    Paginado: o Supabase devolve no máximo 1000 linhas por consulta."""
+    ids: set[str] = set()
+    start, page = 0, 1000
+    while True:
+        rows = (
+            client().table("outreach").select("sequence_id")
+            .order("id").range(start, start + page - 1).execute().data
+        )
+        ids.update(r["sequence_id"] for r in rows if r.get("sequence_id"))
+        if len(rows) < page:
+            return sorted(ids)
+        start += page
+
+
+def outreach_stats(days: int = 7) -> tuple[int, int]:
+    """(inscritos, bounces) entre quem entrou em sequência de `days`+1 até 1 dia atrás.
+    O último dia fica de fora: quem acabou de entrar ainda não recebeu o primeiro email
+    e diluiria a taxa."""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    rows = (
+        client().table("outreach").select("bounced")
+        .gte("added_at", (now - timedelta(days=days + 1)).isoformat())
+        .lt("added_at", (now - timedelta(days=1)).isoformat())
+        .execute().data
+    )
+    return len(rows), sum(1 for r in rows if r.get("bounced"))
 
 
 def get_outreach_step(contact_id: int) -> int | None:

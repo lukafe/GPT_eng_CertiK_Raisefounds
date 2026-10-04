@@ -1,6 +1,6 @@
 """Roda antes do main.py no cron: falha (exit != 0) se qualquer API estiver fora.
 
-Checks de Hunter e Apollo entram nas fases 3 e 5.
+Hunter só é checado com ENRICH_PROVIDER=hunter (o padrão agora é o Apollo).
 """
 
 import sys
@@ -59,12 +59,16 @@ def check_apollo() -> bool:
 
 
 def main() -> None:
+    from common import env
+
     checks = [
         ("telegram", check_telegram),
         ("supabase", check_supabase),
-        ("hunter", check_hunter),
         ("apollo", check_apollo),
     ]
+    # Desde out/2026 o enriquecimento é pelo Apollo; o Hunter só é checado se voltar a ser usado
+    if (env("ENRICH_PROVIDER", required=False, default="apollo") or "").lower() == "hunter":
+        checks.append(("hunter", check_hunter))
     failed = [name for name, fn in checks if not fn()]
     if failed:
         log("healthcheck", f"FALHA: {', '.join(failed)} — main.py não roda hoje")
