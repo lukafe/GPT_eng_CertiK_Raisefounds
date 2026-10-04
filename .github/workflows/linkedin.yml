@@ -1,0 +1,37 @@
+name: LinkedIn — sync de conexões
+
+# Auditoria da rede: puxa as conexões de 1º grau da Unipile pro Supabase.
+# Semanal (segunda 05:00 UTC) porque a rede muda devagar; a fila de convites
+# consulta essa tabela pra nunca convidar quem já é contato.
+# Só leitura no LinkedIn — não manda convite nem mensagem.
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: linkedin-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: outbound
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      UNIPILE_DSN: ${{ secrets.UNIPILE_DSN }}
+      UNIPILE_API_KEY: ${{ secrets.UNIPILE_API_KEY }}
+      UNIPILE_ACCOUNT_ID: ${{ secrets.UNIPILE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python linkedin.py
+      - name: Log da rodada
+        if: always()
+        run: cat log.txt 2>/dev/null || true

@@ -157,6 +157,36 @@ def update_contact(contact_id: int, **fields) -> None:
     client().table("contacts").update(fields).eq("id", contact_id).execute()
 
 
+# --- linkedin ----------------------------------------------------------------
+
+def upsert_li_connections(rows: list[dict]) -> None:
+    """Upsert por (account_id, member_id): re-rodar o sync não duplica ninguém.
+
+    `first_seen_at` fica de fora do payload de propósito — o upsert só toca as
+    colunas enviadas, então a data em que vi a conexão pela primeira vez sobrevive.
+    """
+    if not rows:
+        return
+    client().table("li_connections").upsert(
+        rows, on_conflict="account_id,member_id"
+    ).execute()
+
+
+def li_connections_count(account_id: str | None = None) -> int:
+    q = client().table("li_connections").select("id", count="exact")
+    if account_id:
+        q = q.eq("account_id", account_id)
+    return q.limit(1).execute().count or 0
+
+
+def is_li_connection(member_id: str) -> bool:
+    """Dedupe da fila de convites: já é contato, não gasta convite."""
+    return bool(
+        client().table("li_connections").select("id")
+        .eq("member_id", member_id).limit(1).execute().data
+    )
+
+
 # --- outreach ----------------------------------------------------------------
 
 def insert_outreach(contact_id: int, sequence_id: str) -> None:

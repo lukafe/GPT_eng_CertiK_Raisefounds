@@ -103,3 +103,42 @@ def test_apollo_dry_run():
     finally:
         remove_from_sequence(apollo_id, seq_id)
         delete_contact(apollo_id)
+
+
+# --- outcomes a partir das mensagens da sequência (offline) -------------------
+
+def test_outcomes_bounce_and_reply():
+    from apollo import outcomes_by_contact
+
+    msgs = [
+        {"contact_id": "a", "bounced": True, "replied": False},
+        {"contact_id": "b", "bounced": False, "replied": True},
+        {"contact_id": "c", "bounced": False, "replied": False},
+        {"contact_id": None, "bounced": True},
+    ]
+    assert outcomes_by_contact(msgs) == {"a": "bounced", "b": "replied"}
+
+
+def test_outcomes_bounce_wins_over_reply_across_messages():
+    from apollo import outcomes_by_contact
+
+    msgs = [
+        {"contact_id": "x", "replied": True},
+        {"contact_id": "x", "bounced": True},
+        {"contact_id": "y", "bounced": True},
+        {"contact_id": "y", "replied": True},
+    ]
+    assert outcomes_by_contact(msgs) == {"x": "bounced", "y": "bounced"}
+
+
+def test_push_respects_pause_flag(monkeypatch):
+    import apollo
+    import db
+
+    monkeypatch.setattr(db, "get_state", lambda key: "true" if key == "push_paused" else None)
+    monkeypatch.setattr(db, "log_run", lambda *a, **k: None)
+    called = []
+    monkeypatch.setattr(db, "ready_contacts", lambda: called.append(1) or [])
+    result = apollo.push_to_apollo()
+    assert result["paused"] is True and result["pushed"] == 0
+    assert not called, "com a pausa ligada não deve nem ler a fila"
