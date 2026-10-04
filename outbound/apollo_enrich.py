@@ -36,9 +36,10 @@ RETRY_WINDOW_DAYS = 60  # empresas que o Hunter não cobriu: retenta raises dos 
 # Só sufixos societários saem do nome; "Finance", "Network" etc. ficam (Orbit Finance ≠ Orbit)
 LEGAL_SUFFIXES = {"inc", "labs", "lab", "ltd", "llc", "limited", "corp", "corporation",
                   "gmbh", "ag", "sa", "as", "bv", "pte", "plc", "srl", "the"}
-CRYPTO_TLDS = {"xyz", "io", "fi", "finance", "network", "exchange", "money", "trade",
-               "markets", "dao", "chain", "cash", "wtf", "meme", "foundation", "capital",
-               "games", "build", "protocol"}
+# Terminações quase só usadas por projetos cripto. .io fica de fora: é comum em SaaS
+# (orbit.io, pilot.io) e só passa pela regra de nome distintivo.
+CRYPTO_TLDS = {"xyz", "fi", "finance", "network", "exchange", "money", "trade", "markets",
+               "dao", "chain", "cash", "wtf", "meme"}
 DECISION_SENIORITIES = ["owner", "founder", "c_suite", "partner", "vp", "head", "director"]
 FALLBACK_SENIORITIES = DECISION_SENIORITIES + ["manager", "senior"]
 FREEMAIL_DOMAINS = {
@@ -56,7 +57,8 @@ APOLLO_NEVER = ("marketing", "sales", "business development", "bizdev", "hr", "h
                 "recruit", "talent", "community", "social media", "content", "designer",
                 "support", "advisor", "adviser", "intern", "assistant", "contractor",
                 "consultant", "investor", "board member", "ambassador", "product owner",
-                "partnerships", "growth", "brand", "events", "legal counsel", "finance")
+                "partnerships", "growth", "brand", "events", "legal counsel", "finance",
+                "business developer", "biz dev", "coordinator")
 
 ROLE_LEVEL = (
     (SEC_HEADS, "security"),
@@ -118,8 +120,13 @@ def _title_matches(title: str | None, keywords: tuple[str, ...], whole: bool = F
     'head of tech' casa com 'Head of Technology'. whole=True exige a palavra inteira
     (aceita plural): 'intern' casa com 'Intern', não com 'International'."""
     t = (title or "").lower().replace("cofounder", "co-founder")
-    end = r"s?(?![a-z])" if whole else ""
-    return any(re.search(rf"(?<![a-z]){re.escape(k)}{end}", t) for k in keywords)
+    for k in keywords:
+        # Siglas curtas (cto, ceo, coo, cfo, ciso, hr) sempre por palavra inteira:
+        # 'coo' não pode casar com 'Coordinator'
+        end = r"s?(?![a-z])" if whole or len(k) <= 4 else ""
+        if re.search(rf"(?<![a-z]){re.escape(k)}{end}", t):
+            return True
+    return False
 
 
 def is_never(title: str | None) -> bool:
@@ -356,18 +363,21 @@ def enrich_contacts() -> dict:
         if budget["reveals"] <= 0:
             log(STEP, "limite de revelações da rodada atingido; o resto fica para amanhã")
             break
+        before = budget["reveals"]
         try:
             total_ready += enrich_company(company, budget)
             processed += 1
         except Exception as e:  # noqa: BLE001
-            # Não volta para a fila sozinha: evita revelar de novo e passar do limite por empresa
             log(STEP, f"ERRO em {company['name']}: {e}")
             db.log_run(STEP, False, f"{company['name']}: {e}")
-            try:
-                db.update_company(company["id"], status="enrich_error",
-                                  apollo_enriched_at=datetime.now(timezone.utc).isoformat())
-            except Exception:  # noqa: BLE001
-                pass
+            # Se já gastou crédito nela, sai da fila (revelar de novo passaria do limite por
+            # empresa); se o erro veio antes de qualquer revelação, ela fica para a próxima rodada.
+            if budget["reveals"] < before:
+                try:
+                    db.update_company(company["id"], status="enrich_error",
+                                      apollo_enriched_at=datetime.now(timezone.utc).isoformat())
+                except Exception:  # noqa: BLE001
+                    pass
 
     detail = (f"Apollo: {processed} empresas processadas, {total_ready} contatos ready, "
               f"{per_run - budget['reveals']} revelações (créditos)")

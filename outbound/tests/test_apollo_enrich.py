@@ -30,6 +30,13 @@ def test_pick_domain_keeps_meaningful_words_in_name():
     assert org is None
 
 
+def test_pick_domain_io_needs_distinctive_name():
+    # revisão: orbit.io / pilot.io são SaaS comuns; .io não é atalho de domínio cripto
+    assert ae.pick_domain("Orbit", [{"name": "Orbit", "domain": "orbit.io"}])[0] is None
+    assert ae.pick_domain("Pilot", [{"name": "Pilot", "domain": "pilot.io"}])[0] is None
+    assert ae.pick_domain("Perceptron", [{"name": "Perceptron", "domain": "perceptron.io"}])[0]
+
+
 def test_pick_domain_short_or_generic_tld_rejected():
     # revisão: "Nova" com nova.org passava; nome curto e TLD genérico agora não passam
     assert ae.pick_domain("Nova", [{"name": "Nova", "domain": "nova.org"}])[0] is None
@@ -88,6 +95,14 @@ def test_rank_people_word_boundaries_and_no_filler():
               _p("ops", "Operations")]
     ranked = [p["id"] for p in ae.rank_people(people, "mid")]
     assert ranked == ["cof"]  # sem "completar com qualquer um"
+
+
+def test_short_acronyms_need_whole_word():
+    people = [_p("pc", "Project Coordinator"), _p("bdev", "Senior Business Developer"),
+              _p("coo", "COO"), _p("dev", "Senior Developer")]
+    ranked = [p["id"] for p in ae.rank_people(people, "small")]
+    assert "pc" not in ranked and "bdev" not in ranked
+    assert ranked == ["coo", "dev"]
 
 
 def test_role_level_labels():
@@ -210,15 +225,32 @@ def test_partial_previous_run_does_not_exceed_limit(monkeypatch, fake_db):
     assert len(revealed) == 1
 
 
-def test_error_marks_company_and_does_not_requeue(monkeypatch):
+def _boom(spend):
+    def fn(company, budget):
+        budget["reveals"] -= spend
+        raise RuntimeError("x")
+    return fn
+
+
+def test_error_after_spending_marks_company(monkeypatch):
     monkeypatch.setenv("COMPANIES_PER_DAY", "1")
     updates = []
     monkeypatch.setattr(db, "companies_by_status", lambda status, limit=None: [{"id": 9, "name": "Boom"}])
     monkeypatch.setattr(db, "log_run", lambda *a, **k: None)
     monkeypatch.setattr(db, "update_company", lambda cid, **f: updates.append(f))
-    monkeypatch.setattr(ae, "enrich_company", lambda c, b: (_ for _ in ()).throw(RuntimeError("x")))
+    monkeypatch.setattr(ae, "enrich_company", _boom(spend=2))
     ae.enrich_contacts()
     assert updates and updates[-1]["status"] == "enrich_error"
+
+
+def test_error_before_spending_keeps_company_in_queue(monkeypatch):
+    # ex.: créditos acabaram e o bulk_match devolve 422 — a empresa não pode sumir do pipeline
+    monkeypatch.setenv("COMPANIES_PER_DAY", "1")
+    monkeypatch.setattr(db, "companies_by_status", lambda status, limit=None: [{"id": 9, "name": "Boom"}])
+    monkeypatch.setattr(db, "log_run", lambda *a, **k: None)
+    monkeypatch.setattr(db, "update_company", lambda cid, **f: pytest.fail("não devia tirar da fila"))
+    monkeypatch.setattr(ae, "enrich_company", _boom(spend=0))
+    ae.enrich_contacts()
 
 
 def test_retry_skips_vc_names(monkeypatch):
