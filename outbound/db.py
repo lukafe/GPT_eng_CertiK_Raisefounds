@@ -117,6 +117,22 @@ def companies_by_status(status: str, require_domain: bool = False, limit: int | 
     return q.execute().data
 
 
+def companies_for_apollo_retry(limit: int, since: str):
+    """Empresas que o Hunter deixou sem contato e o Apollo ainda não tentou
+    (raise a partir de `since`), mais recentes primeiro."""
+    if limit <= 0:
+        return []
+    return (
+        client().table("companies").select("*")
+        .eq("status", "no_contacts")
+        .is_("apollo_enriched_at", "null")
+        .gte("raise_date", since)
+        .order("raise_date", desc=True)
+        .limit(limit)
+        .execute().data
+    )
+
+
 def update_company(company_id: int, **fields) -> None:
     client().table("companies").update(fields).eq("id", company_id).execute()
 
@@ -193,6 +209,24 @@ def insert_outreach(contact_id: int, sequence_id: str) -> None:
     client().table("outreach").insert(
         {"contact_id": contact_id, "sequence_id": sequence_id, "last_step": 1}
     ).execute()
+
+
+def outreach_sequence_ids() -> list[str]:
+    """Sequências do Apollo que já receberam alguém (para o sync seguir a antiga e a nova)."""
+    rows = client().table("outreach").select("sequence_id").execute().data
+    return sorted({r["sequence_id"] for r in rows if r.get("sequence_id")})
+
+
+def outreach_stats(days: int = 7) -> tuple[int, int]:
+    """(inscritos, bounces) entre os que entraram em sequência nos últimos `days` dias."""
+    from datetime import datetime, timedelta, timezone
+
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = (
+        client().table("outreach").select("bounced")
+        .gte("added_at", since).execute().data
+    )
+    return len(rows), sum(1 for r in rows if r.get("bounced"))
 
 
 def get_outreach_step(contact_id: int) -> int | None:

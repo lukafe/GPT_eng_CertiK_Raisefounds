@@ -34,8 +34,14 @@ def main() -> None:
 
     import apollo
     import db
-    import hunter
+    from common import env
     from sources import telegram_cryptorank
+
+    provider = (env("ENRICH_PROVIDER", required=False, default="apollo") or "apollo").lower()
+    if provider == "hunter":
+        import hunter as enricher
+    else:
+        import apollo_enrich as enricher
 
     if not db.acquire_lock():
         log("main", "outra rodada em andamento (lock ativo) — abortando esta execução")
@@ -46,7 +52,7 @@ def main() -> None:
         if "fetch" in steps:
             run_step("fetch_raises", telegram_cryptorank.fetch_raises)
         if "enrich" in steps:
-            run_step("enrich_contacts", hunter.enrich_contacts)
+            run_step("enrich_contacts", enricher.enrich_contacts)
 
         if args.dry_run:
             log("main", "dry-run: push_to_apollo e sync_status pulados")

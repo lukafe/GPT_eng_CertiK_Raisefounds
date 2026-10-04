@@ -1,9 +1,32 @@
-# Outbound MVP — raises → Hunter → Apollo → Supabase
+# Outbound — raises → Apollo (decisores verificados) → sequência → Supabase
 
 Todo dia: pega projetos cripto que anunciaram raise no canal público do CryptoRank no
-Telegram (@cryptorank_fundraising), acha emails do time via Hunter, coloca cada contato
-na sequência do Apollo (que envia da caixa do Lucas às 9h no fuso do projeto) e registra
-tudo no Supabase.
+Telegram (@cryptorank_fundraising), acha os decisores com email **verificado** no Apollo,
+coloca cada contato na sequência do Apollo (que envia da caixa do Lucas no fuso do projeto)
+e registra tudo no Supabase.
+
+## Enriquecimento pelo Apollo (desde out/2026, `apollo_enrich.py`)
+- Domínio: o do CryptoRank; sem ele, busca por nome no Apollo e só aceita nome idêntico
+  (domínio cripto como desempate; `.com` só com nome distintivo). Na dúvida → `no_domain`.
+- Pessoas: busca no domínio só com email verificado, escada de cargos por tier
+  (a mesma do Hunter), sem marketing/BD/RH. Revelação via `bulk_match` (1 crédito/pessoa).
+- Só vira `ready` email com `email_status = verified` e fora de provedor gratuito.
+- Limites: `COMPANIES_PER_DAY` empresas/dia, `APOLLO_REVEALS_PER_RUN` créditos/rodada
+  (padrão 30), `source_state.max_contacts_per_company` pessoas/empresa (padrão 3).
+- Também retenta, uma vez, empresas que o Hunter deixou `no_contacts` (raise ≤ 60 dias).
+- Voltar ao Hunter: `ENRICH_PROVIDER=hunter` no workflow.
+
+## Controles no Supabase (`source_state`)
+| chave | efeito |
+|---|---|
+| `push_paused` | `true` = ninguém novo entra na sequência (follow-ups seguem) |
+| `apollo_seq_id` | sequência que recebe inscrições novas (sem ela, `APOLLO_SEQ_ID`) |
+| `email_ramp` | `on` liga a rampa 20 → 50 → 100/dia (nunca passa de `MAX_PER_DAY`) |
+| `email_daily_cap` | degrau atual da rampa |
+| `max_contacts_per_company` | pessoas por empresa (padrão 3) |
+
+Trava de bounce: se os inscritos dos últimos 7 dias tiverem bounce ≥ 3% (mínimo 20),
+o push liga `push_paused` sozinho e registra o motivo em `runs`.
 
 ## Como funciona a fonte (scraper do Telegram)
 
