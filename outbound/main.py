@@ -52,7 +52,10 @@ def main() -> None:
         if "fetch" in steps:
             run_step("fetch_raises", telegram_cryptorank.fetch_raises)
         if "enrich" in steps:
-            run_step("enrich_contacts", enricher.enrich_contacts)
+            if args.dry_run and provider != "hunter":
+                log("main", "dry-run: enrich pulado (o Apollo gasta créditos ao revelar emails)")
+            else:
+                run_step("enrich_contacts", enricher.enrich_contacts)
 
         if args.dry_run:
             log("main", "dry-run: push_to_apollo e sync_status pulados")

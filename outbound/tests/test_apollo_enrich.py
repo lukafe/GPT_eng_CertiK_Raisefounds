@@ -24,13 +24,31 @@ def test_pick_domain_prefers_crypto_tld_among_exact_names():
     assert org["domain"] == "birdai.xyz"
 
 
+def test_pick_domain_keeps_meaningful_words_in_name():
+    # revisão: "Orbit Finance" não pode casar com "Orbit" (orbit.ai)
+    org, _ = ae.pick_domain("Orbit Finance", [{"name": "Orbit", "domain": "orbit.ai"}])
+    assert org is None
+
+
+def test_pick_domain_short_or_generic_tld_rejected():
+    # revisão: "Nova" com nova.org passava; nome curto e TLD genérico agora não passam
+    assert ae.pick_domain("Nova", [{"name": "Nova", "domain": "nova.org"}])[0] is None
+    assert ae.pick_domain("Nova", [{"name": "Nova", "domain": "nova.xyz"}])[0] is None
+
+
+def test_pick_domain_dedupes_same_domain_from_both_buckets():
+    org, _ = ae.pick_domain("Perceptron", [{"name": "Perceptron", "domain": "perceptron.xyz"},
+                                           {"name": "Perceptron", "domain": "perceptron.xyz"}])
+    assert org["domain"] == "perceptron.xyz"
+
+
 def test_pick_domain_rejects_short_name_on_generic_tld():
     # "Fluid" casa com "Fluid Finance SA" (fluid.ch): nome curto, sem domínio cripto → não arrisca
     org, why = ae.pick_domain("Fluid", [
         {"name": "Fluid Recruitment Ltd", "domain": "fluidrecruitment.co"},
         {"name": "Fluid Finance SA", "domain": "fluid.ch"},
     ])
-    assert org is None and "nenhum com domínio cripto" in why
+    assert org is None, why
 
 
 def test_pick_domain_accepts_distinctive_single_match():
@@ -64,6 +82,21 @@ def test_rank_people_small_tier_founder_first_and_bd_out():
     assert "bd" not in ranked and "mkt" not in ranked
 
 
+def test_rank_people_word_boundaries_and_no_filler():
+    people = [_p("dir", "Director of Finance"), _p("contr", "Contractor"),
+              _p("cof", "Cofounder"), _p("int", "Intern"), _p("adv", "Advisor"),
+              _p("ops", "Operations")]
+    ranked = [p["id"] for p in ae.rank_people(people, "mid")]
+    assert ranked == ["cof"]  # sem "completar com qualquer um"
+
+
+def test_role_level_labels():
+    assert ae.role_level("Head of Security") == "security"
+    assert ae.role_level("Co-Founder & CTO") == "founder_ceo"
+    assert ae.role_level("Head of Engineering") == "cto_tech"
+    assert ae.is_never("Product Owner") and not ae.is_never("Head of International Ops")
+
+
 def test_rank_people_large_tier_security_first():
     people = [_p("ceo", "CEO"), _p("sec", "Head of Security"), _p("cto", "CTO")]
     assert [p["id"] for p in ae.rank_people(people, "large")][0] == "sec"
@@ -71,13 +104,16 @@ def test_rank_people_large_tier_security_first():
 
 @pytest.mark.parametrize("match,ok", [
     ({"email": "rob@infinifi.xyz", "email_status": "verified"}, True),
+    ({"email": "rob@mail.infinifi.xyz", "email_status": "verified"}, True),
     ({"email": "rob@infinifi.xyz", "email_status": "extrapolated"}, False),
     ({"email": "rob@gmail.com", "email_status": "verified"}, False),
+    ({"email": "rob@yahoo.co.uk", "email_status": "verified"}, False),
+    ({"email": "rob@othercompany.io", "email_status": "verified"}, False),  # advisor de outra
     ({"email": "", "email_status": "verified"}, False),
     (None, False),
 ])
 def test_accept_match(match, ok):
-    assert ae.accept_match(match) is ok
+    assert ae.accept_match(match, "infinifi.xyz") is ok
 
 
 def test_ladder_from_stage_tier():
@@ -92,6 +128,7 @@ def test_ladder_from_stage_tier():
 def fake_db(monkeypatch):
     store = {"contacts": [], "company_updates": []}
     monkeypatch.setattr(db, "get_state", lambda key: None)
+    monkeypatch.setattr(db, "contacts_by_company", lambda cid: [])
     monkeypatch.setattr(db, "insert_contact_if_new",
                         lambda row: store["contacts"].append(row) or True)
     monkeypatch.setattr(db, "update_company",
@@ -100,20 +137,20 @@ def fake_db(monkeypatch):
 
 
 def test_enrich_company_only_verified_become_ready(monkeypatch, fake_db):
-    monkeypatch.setattr(ae, "search_people", lambda domain, per_page=25: [
-        _p("ceo", "Founder"), _p("cto", "CTO"), _p("ops", "Operations")])
+    monkeypatch.setattr(ae, "search_people", lambda domain, sen, per_page=25: [
+        _p("ceo", "Founder"), _p("cto", "CTO"), _p("coo", "COO")])
     monkeypatch.setattr(ae, "reveal", lambda ids: [
         {"id": "ceo", "email": "ceo@x.xyz", "email_status": "verified", "title": "Founder",
          "country": "United States", "organization": {"industry": "blockchain"}},
         {"id": "cto", "email": "cto@x.xyz", "email_status": "extrapolated", "title": "CTO"},
-        {"id": "ops", "email": "ops@x.xyz", "email_status": "verified", "title": "Operations"},
+        {"id": "coo", "email": "coo@x.xyz", "email_status": "verified", "title": "COO"},
     ][: len(ids)])
     budget = {"reveals": 30}
     ready = ae.enrich_company({"id": 1, "name": "X", "domain": "x.xyz", "stage_tier": "early"},
                               budget)
     statuses = {c["email"]: c["status"] for c in fake_db["contacts"]}
     assert ready == 2
-    assert statuses == {"ceo@x.xyz": "ready", "cto@x.xyz": "skipped", "ops@x.xyz": "ready"}
+    assert statuses == {"ceo@x.xyz": "ready", "cto@x.xyz": "skipped", "coo@x.xyz": "ready"}
     assert all(c["email_source"] == "apollo" for c in fake_db["contacts"])
     assert fake_db["company_updates"][-1]["status"] == "enriched"
     assert fake_db["company_updates"][-1]["time_zone"] == "America/New_York"
@@ -131,6 +168,7 @@ def test_enrich_company_without_domain_resolution_is_no_domain(monkeypatch, fake
 
 def test_enrich_company_respects_reveal_budget(monkeypatch, fake_db):
     monkeypatch.setattr(ae, "search_people", lambda *a, **k: [_p(str(i), "Founder") for i in range(6)])
+
     revealed = []
     monkeypatch.setattr(ae, "reveal", lambda ids: revealed.extend(ids) or [None] * len(ids))
     budget = {"reveals": 2}
@@ -138,13 +176,55 @@ def test_enrich_company_respects_reveal_budget(monkeypatch, fake_db):
     assert len(revealed) == 2 and budget["reveals"] == 0
 
 
-def test_enrich_company_wrong_industry_is_no_fit(monkeypatch, fake_db):
+def test_enrich_company_name_resolved_wrong_industry_stops(monkeypatch, fake_db):
+    monkeypatch.setattr(ae, "lookup_organizations", lambda name: [
+        {"name": "Polaris Industries Group", "domain": "polaris.com", "id": "o"}])
+    monkeypatch.setattr(ae, "search_people", lambda *a, **k: [_p("ceo", "CEO"), _p("cto", "CTO")])
+    calls = []
+    monkeypatch.setattr(ae, "reveal", lambda ids: calls.append(ids) or [
+        {"id": i, "email": f"{i}@polaris.com", "email_status": "verified",
+         "organization": {"industry": "automotive"}} for i in ids])
+    ready = ae.enrich_company({"id": 4, "name": "Polaris Industries Group", "domain": None},
+                              {"reveals": 30})
+    assert ready == 0 and fake_db["company_updates"][-1]["status"] == "no_fit"
+    assert len(calls) == 1 and not fake_db["contacts"]
+
+
+def test_cryptorank_domain_skips_industry_gate(monkeypatch, fake_db):
+    # GameFi que o Apollo rotula "entertainment" não é perdido quando o domínio veio do CryptoRank
     monkeypatch.setattr(ae, "search_people", lambda *a, **k: [_p("ceo", "CEO")])
     monkeypatch.setattr(ae, "reveal", lambda ids: [
-        {"id": "ceo", "email": "ceo@polaris.com", "email_status": "verified",
-         "organization": {"industry": "automotive"}}])
-    ready = ae.enrich_company({"id": 4, "name": "Polaris", "domain": "polaris.com"}, {"reveals": 30})
-    assert ready == 0 and fake_db["company_updates"][-1]["status"] == "no_fit"
+        {"id": "ceo", "email": "ceo@game.xyz", "email_status": "verified",
+         "organization": {"industry": "entertainment"}}])
+    assert ae.enrich_company({"id": 5, "name": "Game", "domain": "game.xyz"}, {"reveals": 30}) == 1
+
+
+def test_partial_previous_run_does_not_exceed_limit(monkeypatch, fake_db):
+    monkeypatch.setattr(db, "contacts_by_company", lambda cid: [
+        {"status": "held"}, {"status": "ready"}, {"status": "skipped"}])
+    monkeypatch.setattr(ae, "search_people", lambda *a, **k: [_p(str(i), "Founder") for i in range(5)])
+    revealed = []
+    monkeypatch.setattr(ae, "reveal", lambda ids: revealed.extend(ids) or [
+        {"id": i, "email": f"{i}@z.xyz", "email_status": "verified"} for i in ids])
+    assert ae.enrich_company({"id": 6, "name": "Z", "domain": "z.xyz"}, {"reveals": 30}) == 1
+    assert len(revealed) == 1
+
+
+def test_error_marks_company_and_does_not_requeue(monkeypatch):
+    monkeypatch.setenv("COMPANIES_PER_DAY", "1")
+    updates = []
+    monkeypatch.setattr(db, "companies_by_status", lambda status, limit=None: [{"id": 9, "name": "Boom"}])
+    monkeypatch.setattr(db, "log_run", lambda *a, **k: None)
+    monkeypatch.setattr(db, "update_company", lambda cid, **f: updates.append(f))
+    monkeypatch.setattr(ae, "enrich_company", lambda c, b: (_ for _ in ()).throw(RuntimeError("x")))
+    ae.enrich_contacts()
+    assert updates and updates[-1]["status"] == "enrich_error"
+
+
+def test_retry_skips_vc_names(monkeypatch):
+    monkeypatch.setattr(db, "companies_for_apollo_retry", lambda limit, since: [
+        {"id": 1, "name": "Foo Capital", "raw_post": ""}, {"id": 2, "name": "InfiniFi", "raw_post": ""}])
+    assert [c["id"] for c in ae.retry_candidates(2)] == [2]
 
 
 # --- trava de bounce, rampa e sequência atual ----------------------------------------

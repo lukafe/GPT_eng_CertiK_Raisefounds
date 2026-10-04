@@ -126,6 +126,7 @@ def companies_for_apollo_retry(limit: int, since: str):
         client().table("companies").select("*")
         .eq("status", "no_contacts")
         .is_("apollo_enriched_at", "null")
+        .not_.is_("fit_service", "null")
         .gte("raise_date", since)
         .order("raise_date", desc=True)
         .limit(limit)
@@ -212,19 +213,33 @@ def insert_outreach(contact_id: int, sequence_id: str) -> None:
 
 
 def outreach_sequence_ids() -> list[str]:
-    """Sequências do Apollo que já receberam alguém (para o sync seguir a antiga e a nova)."""
-    rows = client().table("outreach").select("sequence_id").execute().data
-    return sorted({r["sequence_id"] for r in rows if r.get("sequence_id")})
+    """Sequências do Apollo que já receberam alguém (para o sync seguir a antiga e a nova).
+    Paginado: o Supabase devolve no máximo 1000 linhas por consulta."""
+    ids: set[str] = set()
+    start, page = 0, 1000
+    while True:
+        rows = (
+            client().table("outreach").select("sequence_id")
+            .order("id").range(start, start + page - 1).execute().data
+        )
+        ids.update(r["sequence_id"] for r in rows if r.get("sequence_id"))
+        if len(rows) < page:
+            return sorted(ids)
+        start += page
 
 
 def outreach_stats(days: int = 7) -> tuple[int, int]:
-    """(inscritos, bounces) entre os que entraram em sequência nos últimos `days` dias."""
+    """(inscritos, bounces) entre quem entrou em sequência de `days`+1 até 1 dia atrás.
+    O último dia fica de fora: quem acabou de entrar ainda não recebeu o primeiro email
+    e diluiria a taxa."""
     from datetime import datetime, timedelta, timezone
 
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    now = datetime.now(timezone.utc)
     rows = (
         client().table("outreach").select("bounced")
-        .gte("added_at", since).execute().data
+        .gte("added_at", (now - timedelta(days=days + 1)).isoformat())
+        .lt("added_at", (now - timedelta(days=1)).isoformat())
+        .execute().data
     )
     return len(rows), sum(1 for r in rows if r.get("bounced"))
 
