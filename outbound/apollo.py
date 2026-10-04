@@ -105,6 +105,47 @@ def search_contacts(apollo_ids: list[str]) -> list[dict]:
     return resp.json().get("contacts", [])
 
 
+def search_sequence_messages(seq_id: str, max_pages: int = 50) -> list[dict]:
+    """GET /emailer_messages/search — todas as mensagens da sequência (paginado).
+
+    É a fonte confiável de bounce/resposta: o contact_campaign_statuses do
+    /contacts/search marca bounce e resposta só como "finished".
+    """
+    out: list[dict] = []
+    for page in range(1, max_pages + 1):
+        resp = http_call(
+            "GET", f"{BASE}/emailer_messages/search", step="sync_status", headers=headers(),
+            params={"emailer_campaign_ids[]": seq_id, "page": page, "per_page": 100},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        batch = data.get("emailer_messages", [])
+        out.extend(batch)
+        pagination = data.get("pagination") or {}
+        total_pages = pagination.get("total_pages") or 1
+        if not batch or page >= int(total_pages):
+            break
+    return out
+
+
+def outcomes_by_contact(messages: list[dict]) -> dict[str, str]:
+    """apollo contact_id → 'bounced' | 'replied' a partir das mensagens.
+
+    Bounce (inclusive spam_blocked) vence resposta, igual a interpret_campaign_status.
+    Contatos sem nenhum dos dois não aparecem no resultado.
+    """
+    result: dict[str, str] = {}
+    for m in messages:
+        cid = m.get("contact_id")
+        if not cid:
+            continue
+        if m.get("bounced"):
+            result[cid] = "bounced"
+        elif m.get("replied") and result.get(cid) != "bounced":
+            result[cid] = "replied"
+    return result
+
+
 def interpret_campaign_status(entry: dict) -> str | None:
     """Entrada de contact_campaign_statuses → replied | bounced | finished | None.
 
@@ -124,6 +165,14 @@ def interpret_campaign_status(entry: dict) -> str | None:
 
 def push_to_apollo() -> dict:
     """Etapa 3: contacts ready → Apollo contact + sequência (até MAX_PER_DAY)."""
+    # Pausa controlada pelo Supabase (source_state.push_paused = 'true'): ninguém
+    # novo entra na sequência; quem já está nela segue recebendo os follow-ups.
+    if (db.get_state("push_paused") or "").strip().lower() == "true":
+        detail = "inscrições novas pausadas (source_state.push_paused=true)"
+        log("push_to_apollo", detail)
+        db.log_run("push_to_apollo", True, detail)
+        return {"pushed": 0, "candidates": 0, "paused": True}
+
     max_per_day = int(env("MAX_PER_DAY", required=False, default="40"))
     seq_id = env("APOLLO_SEQ_ID")
     mailbox_id = resolve_mailbox_id()
@@ -219,6 +268,29 @@ def sync_status() -> dict:
             db.update_outreach_by_contact(local["id"], **outreach_fields)
             {"replied": replies, "bounced": bounces,
              "finished": finished_list}[new_status].append(_label(local))
+            updated += 1
+
+    # Fonte confiável de bounce/resposta: as mensagens da sequência. Corrige também
+    # contatos que o passo acima marcou como "finished" mas que, na verdade,
+    # deram bounce ou responderam.
+    try:
+        outcomes = outcomes_by_contact(search_sequence_messages(seq_id))
+    except Exception as e:  # noqa: BLE001
+        outcomes = {}
+        log("sync_status", f"falha ao ler mensagens da sequência: {e}")
+        db.log_run("sync_status", False, f"emailer_messages/search: {e}")
+    if outcomes:
+        candidates = db.contacts_by_status("in_sequence") + db.contacts_by_status("finished")
+        for local in candidates:
+            outcome = outcomes.get(local.get("apollo_id") or "")
+            if not outcome or local.get("status") == outcome:
+                continue
+            db.update_contact(local["id"], status=outcome,
+                              stage="do_not_contact" if outcome == "bounced" else "replied")
+            db.update_outreach_by_contact(
+                local["id"], **({"bounced": True} if outcome == "bounced" else {"replied_at": now})
+            )
+            (bounces if outcome == "bounced" else replies).append(_label(local))
             updated += 1
 
     # Empresa → done quando nenhum contato dela segue in_sequence
