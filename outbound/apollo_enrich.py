@@ -1,4 +1,4 @@
-"""Etapa 2 (out/2026): decisores pelo Apollo, só com email verificado. Substitui o Hunter.
+"""Etapa 2 (out/2026): decisores pelo Apollo, só com email verificado.
 
 Por empresa:
  1. Domínio. Usa o do CryptoRank. Sem ele, faz a busca grátis por nome no Apollo e só
@@ -7,11 +7,11 @@ Por empresa:
     cripto (.xyz, .io, .finance...) com nome de 5+ letras. Qualquer dúvida → 'no_domain':
     melhor perder a conta do que escrever para a empresa errada (caso Polaris).
  2. Pessoas. Busca grátis no domínio, só senioridade de decisão e email verificado.
- 3. Escolha. Escada de cargos por tier (a do Hunter), com casamento por palavra inteira,
+ 3. Escolha. Escada de cargos por tier (targeting.py), com casamento por palavra inteira,
     sem marketing, BD, RH, conselheiros, estagiários etc. Sem "completar com qualquer um".
  4. Revelação. bulk_match, 1 crédito por pessoa. Só vira 'ready' email com
     email_status 'verified', fora de provedor gratuito e do domínio da empresa.
-    Domínio achado pelo nome passa pelo portão de indústria (como no Hunter) já na
+    Domínio achado pelo nome passa pelo portão de indústria já na
     primeira revelação; indústria fora do universo para o gasto na hora.
 
 Créditos: no máximo APOLLO_REVEALS_PER_RUN revelações por rodada (padrão 30).
@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 import db
 from common import env, http_call, log
-from hunter import CTO, ENG_HEADS, ENGINEERS, FOUNDERS, OPS_C_LEVEL, SEC_HEADS, TECH_LEADS, \
+from targeting import CTO, ENG_HEADS, ENGINEERS, FOUNDERS, OPS_C_LEVEL, SEC_HEADS, TECH_LEADS, \
     TIER_LADDERS, tier_for
 from timezones import tz_for_country
 
@@ -31,7 +31,7 @@ STEP = "enrich_contacts"
 
 DEFAULT_MAX_PER_COMPANY = 3
 DEFAULT_REVEALS_PER_RUN = 30
-RETRY_WINDOW_DAYS = 60  # empresas que o Hunter não cobriu: retenta raises dos últimos 60 dias
+RETRY_WINDOW_DAYS = 60  # empresas que ficaram sem contato: retenta raises dos últimos 60 dias
 
 # Só sufixos societários saem do nome; "Finance", "Network" etc. ficam (Orbit Finance ≠ Orbit)
 LEGAL_SUFFIXES = {"inc", "labs", "lab", "ltd", "llc", "limited", "corp", "corporation",
@@ -337,7 +337,7 @@ def match_tz(country: str | None) -> str | None:
 
 
 def retry_candidates(limit: int) -> list[dict]:
-    """Empresas que o Hunter deixou sem contato e que passaram no portão de fit
+    """Empresas que ficaram sem contato (no enriquecimento antigo) e que passaram no portão de fit
     (fit_service preenchido), sem nome/post de VC ou fundo."""
     from sources.telegram_cryptorank import is_vc_or_fund
 
@@ -350,7 +350,7 @@ def retry_candidates(limit: int) -> list[dict]:
 
 
 def enrich_contacts() -> dict:
-    """Etapa 2: empresas na fila (e as que o Hunter não cobriu) → Apollo → contatos."""
+    """Etapa 2: empresas na fila (e as que ficaram sem contato) → Apollo → contatos."""
     per_day = int(env("COMPANIES_PER_DAY", required=False, default="4"))
     per_run = int(env("APOLLO_REVEALS_PER_RUN", required=False, default=str(DEFAULT_REVEALS_PER_RUN)))
     budget = {"reveals": per_run}

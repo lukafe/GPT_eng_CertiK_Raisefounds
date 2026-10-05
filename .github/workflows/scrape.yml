@@ -1,7 +1,7 @@
 name: Scrape raises (2h)
 
 # 24/7: lê o canal do CryptoRank a cada 2h e enfileira empresas novas.
-# Não gasta cota de Hunter/Apollo — só leitura do Telegram + gravação no Supabase.
+# Não gasta créditos do Apollo — só leitura do Telegram + gravação no Supabase.
 # Minuto 41 de propósito: na virada da hora o agendador do GitHub atrasa e pula rodadas.
 on:
   schedule:
@@ -21,7 +21,6 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
       APOLLO_KEY: ${{ secrets.APOLLO_KEY }}
       APOLLO_SEQ_ID: ${{ secrets.APOLLO_SEQ_ID }}
     steps:

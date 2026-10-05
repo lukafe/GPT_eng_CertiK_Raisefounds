@@ -6,7 +6,7 @@ status 'no_fit' e NUNCA recebe email.
 
 Dois portões:
  1. classify_fit(texto do post) — no scraper, custo zero.
- 2. industry_fit(indústria do Hunter) — no enriquecimento, barra domínios
+ 2. industry_fit(indústria da empresa no Apollo) — no enriquecimento, barra domínios
     resolvidos pelo nome que caíram na empresa errada (caso Polaris Inc.).
 """
 
@@ -54,7 +54,7 @@ NEGATIVE_KEYWORDS: tuple[tuple[str, int], ...] = (
     ("construction", -4), ("logistics", -3), ("agriculture", -4),
 )
 
-# Indústrias (campo `industry` do Hunter) claramente fora do universo CertiK.
+# Indústrias (campo `industry` da organização no Apollo) claramente fora do universo CertiK.
 # Usado como HARD GATE quando o domínio foi resolvido pelo nome da empresa.
 BLOCKED_INDUSTRIES = (
     "vehicle", "automotive", "publishing", "printing", "apparel", "fashion",

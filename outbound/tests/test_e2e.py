@@ -1,6 +1,6 @@
 """Ponta a ponta (fase 6): main.py --dry-run popula companies e contacts.
 
-Live: precisa de Supabase + Hunter reais (consome cota do Hunter!).
+Live: precisa do Supabase real (o dry-run pula o enriquecimento, então não gasta créditos do Apollo).
 """
 
 import subprocess
