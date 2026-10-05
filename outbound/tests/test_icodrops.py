@@ -80,7 +80,7 @@ def test_build_row():
     row = ico.build_row(item, ico.parse_project_page(PROJECT), date(2026, 10, 5))
     assert row["source"] == "icodrops" and row["source_url"] == "https://icodrops.com/clix/"
     assert row["domain"] == "clix.money" and row["status"] == "queued"
-    assert row["stage_tier"] == "ico_other" and row["persona_id"] == "web3"
+    assert "stage_tier" not in row and row["persona_id"] == "web3"   # coluna calculada no banco
     assert row["category"] == "TGE and Distribution"
     assert row["raise_date"] == "2026-10-05"          # sem data de venda: dia em que achamos
     assert row["fit_service"] == "smart_contract_audit"
