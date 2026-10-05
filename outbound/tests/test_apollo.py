@@ -142,3 +142,33 @@ def test_push_respects_pause_flag(monkeypatch):
     result = apollo.push_to_apollo()
     assert result["paused"] is True and result["pushed"] == 0
     assert not called, "com a pausa ligada não deve nem ler a fila"
+
+
+# --- no máximo 3 por empresa por dia (out/2026) --------------------------------------
+
+def _c(cid, company, raise_date):
+    return {"id": cid, "company_id": company, "companies": {"raise_date": raise_date}}
+
+
+def test_select_for_today_caps_three_per_company_and_keeps_order():
+    from apollo import select_for_today
+
+    contacts = ([_c(i, 1, "2026-10-04") for i in (5, 3, 4, 1, 2)]        # empresa nova, 5 pessoas
+                + [_c(i, 2, "2026-10-01") for i in (11, 10)])           # empresa mais antiga
+    chosen = select_for_today(contacts, {}, budget=40)
+    assert [c["id"] for c in chosen] == [1, 2, 3, 10, 11]   # 3 da nova (ordem de achado), depois a antiga
+
+
+def test_select_for_today_counts_who_already_entered_today():
+    from apollo import select_for_today
+
+    contacts = [_c(i, 1, "2026-10-04") for i in (1, 2, 3)] + [_c(9, 2, "2026-10-02")]
+    chosen = select_for_today(contacts, {1: 2}, budget=40)   # a empresa 1 já teve 2 hoje
+    assert [c["id"] for c in chosen] == [1, 9]
+
+
+def test_select_for_today_respects_daily_budget():
+    from apollo import select_for_today
+
+    contacts = [_c(i, i, "2026-10-04") for i in range(1, 10)]
+    assert len(select_for_today(contacts, {}, budget=4)) == 4

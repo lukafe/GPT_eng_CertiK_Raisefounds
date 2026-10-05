@@ -68,6 +68,7 @@ def current_seq_id() -> str:
 # --- trava de bounce e rampa de volume -------------------------------------------
 
 BOUNCE_PAUSE_PCT = 0.03       # acima disso, pausa inscrições novas sozinho
+PER_COMPANY_PER_DAY = 3       # no máximo 3 pessoas da mesma empresa entram por dia
 BOUNCE_MIN_SAMPLE = 20        # mínimo de inscritos em 7 dias para a taxa valer
 RAMP_STEPS = (20, 50, 100)    # degraus da rampa (teto diário)
 RAMP_ADVANCE_MAX_BOUNCE = 0.02
@@ -220,6 +221,26 @@ def interpret_campaign_status(entry: dict) -> str | None:
 
 # --- etapas ------------------------------------------------------------------
 
+def select_for_today(contacts: list[dict], pushed_today: dict[int, int], budget: int) -> list[dict]:
+    """Quem entra hoje: empresa mais recente primeiro e, dentro dela, na ordem em que o
+    enriquecimento achou (decisores primeiro). No máximo PER_COMPANY_PER_DAY por empresa
+    por dia, contando quem já entrou hoje; o resto da empresa fica para os próximos dias."""
+    ordered = sorted(contacts, key=lambda c: c.get("id") or 0)
+    ordered.sort(key=lambda c: (c.get("companies") or {}).get("raise_date") or "", reverse=True)
+    per_company = dict(pushed_today)
+    chosen = []
+    for c in ordered:
+        if len(chosen) >= budget:
+            break
+        cid = c.get("company_id")
+        if cid is not None and per_company.get(cid, 0) >= PER_COMPANY_PER_DAY:
+            continue
+        chosen.append(c)
+        if cid is not None:
+            per_company[cid] = per_company.get(cid, 0) + 1
+    return chosen
+
+
 def push_to_apollo() -> dict:
     """Etapa 3: contacts ready → Apollo contact + sequência (até MAX_PER_DAY)."""
     # Pausa controlada pelo Supabase (source_state.push_paused = 'true'): ninguém
@@ -254,14 +275,12 @@ def push_to_apollo() -> dict:
         db.log_run("push_to_apollo", True, detail)
         return {"pushed": 0, "candidates": 0}
 
-    contacts = db.ready_contacts()
-    # Empresa mais recente primeiro; o teto corta DEPOIS de ordenar, então o
-    # excedente que fica pra amanhã é sempre o das empresas mais antigas.
-    contacts.sort(key=lambda c: (c.get("companies") or {}).get("raise_date") or "", reverse=True)
+    all_ready = db.ready_contacts()
+    contacts = select_for_today(all_ready, db.pushed_today_by_company(), budget)
 
     pushed = 0
     pushed_contacts = []
-    for c in contacts[:budget]:
+    for c in contacts:
         company = c.get("companies") or {}
         try:
             # Idempotente: se uma rodada anterior criou o contato mas falhou depois,
@@ -280,7 +299,10 @@ def push_to_apollo() -> dict:
             log("push_to_apollo", f"ERRO em {c['email']}: {e}")
             db.log_run("push_to_apollo", False, f"{c['email']}: {e}")
 
-    detail = f"{pushed}/{len(contacts)} contatos enviados à sequência"
+    waiting = len(all_ready) - pushed
+    detail = (f"{pushed}/{len(contacts)} contatos enviados à sequência"
+              + (f"; {waiting} esperam os próximos dias (até {PER_COMPANY_PER_DAY} por empresa/dia)"
+                 if waiting else ""))
     log("push_to_apollo", detail)
     db.log_run("push_to_apollo", True, detail)
 

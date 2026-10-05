@@ -44,6 +44,17 @@ def company_exists_by_name(name_normalized: str) -> bool:
     )
 
 
+def company_exists_by_source_url(url: str) -> bool:
+    return bool(client().table("companies").select("id").eq("source_url", url).limit(1).execute().data)
+
+
+def company_exists_by_domain(domain: str) -> bool:
+    """Mesma empresa vinda de outra fonte (ex.: raise no CryptoRank e venda no ICO Drops)."""
+    if not domain:
+        return False
+    return bool(client().table("companies").select("id").eq("domain", domain).limit(1).execute().data)
+
+
 def insert_company(row: dict) -> None:
     client().table("companies").insert(row).execute()
 
@@ -97,6 +108,23 @@ def count_pushed_today() -> int:
         .gte("added_at", today).limit(1).execute()
     )
     return resp.count or 0
+
+
+def pushed_today_by_company() -> dict[int, int]:
+    """Quantos contatos de cada empresa já entraram em sequência hoje (UTC)."""
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = (
+        client().table("outreach").select("contacts(company_id)")
+        .gte("added_at", today).execute().data
+    )
+    counts: dict[int, int] = {}
+    for r in rows:
+        cid = (r.get("contacts") or {}).get("company_id")
+        if cid is not None:
+            counts[cid] = counts.get(cid, 0) + 1
+    return counts
 
 
 def companies_by_status(status: str, require_domain: bool = False, limit: int | None = None):

@@ -10,12 +10,26 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
 
 - Domínio: o do CryptoRank; sem ele, busca por nome no Apollo e só aceita nome idêntico
   (domínio cripto como desempate; `.com` só com nome distintivo). Na dúvida → `no_domain`.
-- Pessoas: busca no domínio só com email verificado, escada de cargos por tier
-  (`targeting.py`), sem marketing/BD/RH. Revelação via `bulk_match` (1 crédito/pessoa).
+- Pessoas (out/2026: falar com o máximo do time): até 10 por empresa, só com email
+  verificado. Primeiro a escada de decisores do tier (`targeting.py`); depois o resto do
+  time, técnica e produto antes de operações, BD e marketing. Nunca entram RH/recrutamento,
+  estagiário, assistente, suporte, embaixador/moderador, advisor, investidor, conselho,
+  consultor. Revelação via `bulk_match` (1 crédito/pessoa).
+- Inscrição: no máximo 3 pessoas da mesma empresa por dia (decisores primeiro); o resto
+  entra nos dias seguintes, dentro do teto diário.
+- Fit: o canal do CryptoRank é 100% cripto, então entra tudo, exceto VC/fundo e setor
+  claramente fora (saúde, varejo, moda...). Resumos do canal ("Q3 Highlights") são ignorados.
 - Só vira `ready` email com `email_status = verified` e fora de provedor gratuito.
 - Limites: `COMPANIES_PER_DAY` empresas/dia, `APOLLO_REVEALS_PER_RUN` créditos/rodada
-  (padrão 30), `source_state.max_contacts_per_company` pessoas/empresa (padrão 3).
-- Também retenta, uma vez, empresas que ficaram `no_contacts` no enriquecimento antigo (raise ≤ 60 dias).
+  (padrão 60), `source_state.max_contacts_per_company` pessoas/empresa (padrão 10).
+- Também retenta, uma vez, empresas que ficaram `no_contacts` no enriquecimento antigo (raise ≤ 60 dias);
+  como o domínio delas pode ter vindo de busca por nome, passam pelo portão de indústria.
+
+## Fonte de ICO: ICO Drops (desde out/2026, `sources/icodrops.py`)
+- Lê as listas de vendas futuras e ativas (TGE, IDO, IEO, presale, airdrop/points) e, para
+  cada projeto novo, a página do projeto (site oficial e descrição). Dedupe por URL, nome e
+  domínio; entra como empresa Web3 (tier `ico_other`) na mesma fila do enriquecimento.
+- Roda na etapa `fetch` no máximo a cada 6h. Amostra sem gravar: `python -m sources.icodrops --dump 10`.
 
 ## Controles no Supabase (`source_state`)
 | chave | efeito |
@@ -24,7 +38,7 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
 | `apollo_seq_id` | sequência que recebe inscrições novas (sem ela, `APOLLO_SEQ_ID`) |
 | `email_ramp` | `on` liga a rampa 20 → 50 → 100/dia (nunca passa de `MAX_PER_DAY`) |
 | `email_daily_cap` | degrau atual da rampa |
-| `max_contacts_per_company` | pessoas por empresa (padrão 3) |
+| `max_contacts_per_company` | pessoas por empresa (padrão 10) |
 
 Trava de bounce: se os inscritos dos últimos 7 dias tiverem bounce ≥ 3% (mínimo 20),
 o push liga `push_paused` sozinho e registra o motivo em `runs`.
@@ -113,7 +127,7 @@ fuso do contato) — o cron só abastece a fila.
 
 ## Quando os créditos do Apollo ficarem curtos
 
-Cada pessoa revelada gasta 1 crédito de lead; `APOLLO_REVEALS_PER_RUN` (padrão 30) limita
+Cada pessoa revelada gasta 1 crédito de lead; `APOLLO_REVEALS_PER_RUN` (padrão 60) limita
 o gasto por rodada. O monitor mostra os créditos restantes e acende alerta abaixo de 100.
 
 ## Estados

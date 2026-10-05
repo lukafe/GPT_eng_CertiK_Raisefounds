@@ -6,15 +6,19 @@ Por empresa:
     um único resultado com nome distintivo, ou um único resultado em domínio tipicamente
     cripto (.xyz, .io, .finance...) com nome de 5+ letras. Qualquer dúvida → 'no_domain':
     melhor perder a conta do que escrever para a empresa errada (caso Polaris).
- 2. Pessoas. Busca grátis no domínio, só senioridade de decisão e email verificado.
- 3. Escolha. Escada de cargos por tier (targeting.py), com casamento por palavra inteira,
-    sem marketing, BD, RH, conselheiros, estagiários etc. Sem "completar com qualquer um".
+ 2. Pessoas. Busca grátis no domínio, só email verificado: primeiro as senioridades de
+    decisão; se não der para preencher as vagas, todas as senioridades.
+ 3. Escolha (out/2026, pedido do Lucas: falar com o máximo do time). Primeiro a escada de
+    decisores do tier (targeting.py); depois qualquer pessoa do time, técnica e produto
+    antes de operações, BD e marketing. Fora sempre quem não é do time ou não repassa:
+    RH/recrutamento, estagiário, assistente, suporte, embaixador/moderador, advisor,
+    investidor, conselho, consultor. Até 10 por empresa (source_state.max_contacts_per_company).
  4. Revelação. bulk_match, 1 crédito por pessoa. Só vira 'ready' email com
     email_status 'verified', fora de provedor gratuito e do domínio da empresa.
     Domínio achado pelo nome passa pelo portão de indústria já na
     primeira revelação; indústria fora do universo para o gasto na hora.
 
-Créditos: no máximo APOLLO_REVEALS_PER_RUN revelações por rodada (padrão 30).
+Créditos: no máximo APOLLO_REVEALS_PER_RUN revelações por rodada (padrão 60).
 """
 
 import re
@@ -29,8 +33,8 @@ from timezones import tz_for_country
 API = "https://api.apollo.io/api/v1"
 STEP = "enrich_contacts"
 
-DEFAULT_MAX_PER_COMPANY = 3
-DEFAULT_REVEALS_PER_RUN = 30
+DEFAULT_MAX_PER_COMPANY = 10
+DEFAULT_REVEALS_PER_RUN = 60
 RETRY_WINDOW_DAYS = 60  # empresas que ficaram sem contato: retenta raises dos últimos 60 dias
 
 # Só sufixos societários saem do nome; "Finance", "Network" etc. ficam (Orbit Finance ≠ Orbit)
@@ -41,7 +45,6 @@ LEGAL_SUFFIXES = {"inc", "labs", "lab", "ltd", "llc", "limited", "corp", "corpor
 CRYPTO_TLDS = {"xyz", "fi", "finance", "network", "exchange", "money", "trade", "markets",
                "dao", "chain", "cash", "wtf", "meme"}
 DECISION_SENIORITIES = ["owner", "founder", "c_suite", "partner", "vp", "head", "director"]
-FALLBACK_SENIORITIES = DECISION_SENIORITIES + ["manager", "senior"]
 FREEMAIL_DOMAINS = {
     "gmail.com", "googlemail.com", "ymail.com", "msn.com", "icloud.com", "me.com", "mac.com",
     "aol.com", "proton.me", "protonmail.com", "pm.me", "mail.com", "mail.ru", "qq.com",
@@ -59,6 +62,24 @@ APOLLO_NEVER = ("marketing", "sales", "business development", "bizdev", "hr", "h
                 "consultant", "investor", "board member", "ambassador", "product owner",
                 "partnerships", "growth", "brand", "events", "legal counsel", "finance",
                 "business developer", "biz dev", "coordinator")
+
+# Quem não é do time ou não repassa o assunto: nunca entra, nem para completar as vagas.
+NOT_TEAM = ("hr", "hrbp", "chro", "human resources", "people", "people operations", "people ops",
+            "recruit", "recruiter", "recruiting", "recruitment", "talent",
+            "intern", "internship", "trainee", "apprentice", "student", "assistant",
+            "support", "customer support", "customer success", "ambassador", "moderator",
+            "advisor", "adviser", "investor", "board member", "consultant", "contractor",
+            "freelance", "freelancer", "volunteer")
+# Ordem para completar as vagas depois dos decisores: técnica e produto primeiro.
+FILLER_ORDER = (
+    ("security", "engineer", "engineering", "developer", "devops", "protocol", "blockchain",
+     "solidity", "smart contract", "research", "architect", "tech", "technology", "cto"),
+    ("product",),
+    ("operations", "ops", "coo", "finance", "cfo", "legal", "compliance", "risk"),
+    ("business development", "bizdev", "biz dev", "partnerships", "partnership", "growth",
+     "sales", "strategy"),
+    ("marketing", "community", "content", "brand", "social media", "events"),
+)
 
 ROLE_LEVEL = (
     (SEC_HEADS, "security"),
@@ -130,7 +151,20 @@ def _title_matches(title: str | None, keywords: tuple[str, ...], whole: bool = F
 
 
 def is_never(title: str | None) -> bool:
+    """Fora da escada de decisores (pode entrar depois, para completar as vagas)."""
     return _title_matches(title, APOLLO_NEVER, whole=True)
+
+
+def is_not_team(title: str | None) -> bool:
+    """Nunca entra: não é do time ou não repassa (RH, estagiário, advisor, investidor...)."""
+    return _title_matches(title, NOT_TEAM, whole=True)
+
+
+def filler_rank(title: str | None) -> int:
+    for i, group in enumerate(FILLER_ORDER):
+        if _title_matches(title, group):
+            return i
+    return len(FILLER_ORDER)
 
 
 def ladder_for(company: dict) -> str:
@@ -145,13 +179,37 @@ def role_level(title: str | None) -> str:
     return "other"
 
 
+def title_parts(title: str | None) -> list[str]:
+    """'Founder & CEO, Angel Investor' → ['Founder', 'CEO', 'Angel Investor']."""
+    parts = re.split(r"\s*(?:[,&|/;]|\band\b|\s[-–]\s)\s*", (title or "").strip(), flags=re.I)
+    return [p for p in parts if p]
+
+
+def decision_rung(title: str | None, tier: str) -> int | None:
+    """Degrau da escada de decisores (0 = topo) pelo melhor pedaço do cargo; None = não é
+    decisor. Um pedaço vetado ('Angel Investor') não tira o decisor de 'Founder & CEO'."""
+    best = None
+    for part in title_parts(title):
+        if is_never(part) or is_not_team(part):
+            continue
+        for i, rung in enumerate(TIER_LADDERS[tier]):
+            if _title_matches(part, rung):
+                best = i if best is None else min(best, i)
+                break
+    return best
+
+
 def rank_people(people: list[dict], tier: str) -> list[dict]:
-    """Ordena pela escada do tier. Cargo vetado ou fora da escada não entra."""
-    pool = [p for p in people if not is_never(p.get("title"))]
-    ranked: list[dict] = []
-    for rung in TIER_LADDERS[tier]:
-        ranked.extend(p for p in pool if p not in ranked and _title_matches(p.get("title"), rung))
-    return ranked
+    """Decisores primeiro (escada do tier); depois o resto do time, técnica e produto antes de
+    operações, BD e marketing. Nunca entram: quem não é do time ou não repassa (RH/People,
+    estagiário, advisor, investidor...) e quem não tem cargo."""
+    ranked = sorted(((decision_rung(p.get("title"), tier), i, p) for i, p in enumerate(people)),
+                    key=lambda x: (x[0] is None, x[0] or 0, x[1]))
+    decision = [p for rung, _, p in ranked if rung is not None]
+    rest = [p for rung, _, p in ranked
+            if rung is None and (p.get("title") or "").strip() and not is_not_team(p.get("title"))]
+    rest.sort(key=lambda p: filler_rank(p.get("title")))  # estável: mantém a ordem do Apollo
+    return decision + rest
 
 
 def email_domain_ok(email: str, domain: str) -> bool:
@@ -191,13 +249,15 @@ def lookup_organizations(name: str) -> list[dict]:
     return orgs
 
 
-def search_people(domain: str, seniorities: list[str], per_page: int = 25) -> list[dict]:
-    """Busca grátis de pessoas no domínio, só com email verificado no Apollo."""
+def search_people(domain: str, seniorities: list[str] | None, per_page: int = 25) -> list[dict]:
+    """Busca grátis de pessoas no domínio, só com email verificado no Apollo.
+    seniorities None = todas as senioridades."""
+    body = {"q_organization_domains_list": [domain], "contact_email_status": ["verified"],
+            "page": 1, "per_page": per_page}
+    if seniorities:
+        body["person_seniorities"] = seniorities
     resp = http_call("POST", f"{API}/mixed_people/api_search", step=STEP, headers=headers(),
-                     json={"q_organization_domains_list": [domain],
-                           "person_seniorities": seniorities,
-                           "contact_email_status": ["verified"],
-                           "page": 1, "per_page": per_page})
+                     json=body)
     resp.raise_for_status()
     return resp.json().get("people") or []
 
@@ -244,6 +304,10 @@ def enrich_company(company: dict, budget: dict) -> int:
     now = datetime.now(timezone.utc).isoformat()
     name = company["name"]
     domain, org_id, why, by_name = resolve_domain(company)
+    # Retentativa de empresa antiga ('no_contacts'): o domínio pode ter vindo da busca por
+    # nome do enriquecimento antigo, então passa pelo portão de indústria como se fosse
+    # achado pelo nome (evita escrever para a empresa errada, caso Polaris/Pons).
+    gate_industry = by_name or company.get("status") == "no_contacts"
     if not domain:
         db.update_company(company["id"], status="no_domain", apollo_enriched_at=now)
         log(STEP, f"{name}: domínio não resolvido ({why}) — no_domain")
@@ -257,9 +321,11 @@ def enrich_company(company: dict, budget: dict) -> int:
 
     tier = ladder_for(company)
     slots = max(0, max_per_company() - already_selected(company["id"]))
-    people = search_people(domain, DECISION_SENIORITIES)
-    if not people:
-        people = search_people(domain, FALLBACK_SENIORITIES)
+    people = search_people(domain, DECISION_SENIORITIES) if slots else []
+    if slots and len(rank_people(people, tier)) < slots * 2:
+        # Para completar as vagas com o resto do time: todas as senioridades (busca grátis)
+        seen = {p.get("id") for p in people}
+        people += [p for p in search_people(domain, None, per_page=50) if p.get("id") not in seen]
     ranked = rank_people(people, tier)
 
     ready, revealed, no_fit, country = 0, 0, False, None
@@ -274,7 +340,7 @@ def enrich_company(company: dict, budget: dict) -> int:
             if not match:
                 continue
             org = match.get("organization") or {}
-            if by_name and not industry_fit(org.get("industry")):
+            if gate_industry and not industry_fit(org.get("industry")):
                 no_fit = True  # domínio achado pelo nome caiu em outra indústria: para já
                 break
             email = (match.get("email") or "").strip().lower()
@@ -310,7 +376,7 @@ def enrich_company(company: dict, budget: dict) -> int:
         if tz:
             updates["time_zone"] = tz
     db.update_company(company["id"], **updates)
-    log(STEP, f"{name} ({domain}, {why}): tier={tier}, {len(ranked)} decisores com email "
+    log(STEP, f"{name} ({domain}, {why}): tier={tier}, {len(ranked)} pessoas do time com email "
               f"verificado, {revealed} revelados, {ready} ready")
     return ready
 

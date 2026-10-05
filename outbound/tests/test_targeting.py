@@ -65,7 +65,7 @@ def test_large_ladder_prefers_security_and_skips_founders():
 
 
 def test_cap_and_never_list():
-    assert MAX_CONTACTS_PER_COMPANY == 3
+    assert MAX_CONTACTS_PER_COMPANY == 10
     for title in ("Head of Sales", "Marketing Manager", "Business Development Lead",
                   "Community Manager", "Talent Partner"):
         assert is_never(title), title
