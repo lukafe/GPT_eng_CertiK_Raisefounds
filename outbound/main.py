@@ -35,7 +35,7 @@ def main() -> None:
     import apollo
     import apollo_enrich
     import db
-    from sources import telegram_cryptorank
+    from sources import icodrops, telegram_cryptorank
 
     if not db.acquire_lock():
         log("main", "outra rodada em andamento (lock ativo) — abortando esta execução")
@@ -45,6 +45,7 @@ def main() -> None:
     try:
         if "fetch" in steps:
             run_step("fetch_raises", telegram_cryptorank.fetch_raises)
+            run_step("fetch_icos", icodrops.fetch_icos)  # no máximo a cada 6h (controle interno)
         if "enrich" in steps:
             if args.dry_run:
                 log("main", "dry-run: enrich pulado (o Apollo gasta créditos ao revelar emails)")

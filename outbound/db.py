@@ -44,6 +44,17 @@ def company_exists_by_name(name_normalized: str) -> bool:
     )
 
 
+def company_exists_by_source_url(url: str) -> bool:
+    return bool(client().table("companies").select("id").eq("source_url", url).limit(1).execute().data)
+
+
+def company_exists_by_domain(domain: str) -> bool:
+    """Mesma empresa vinda de outra fonte (ex.: raise no CryptoRank e venda no ICO Drops)."""
+    if not domain:
+        return False
+    return bool(client().table("companies").select("id").eq("domain", domain).limit(1).execute().data)
+
+
 def insert_company(row: dict) -> None:
     client().table("companies").insert(row).execute()
 
