@@ -105,8 +105,17 @@ def parse_sale_date(value: str | None) -> date | None:
         return None
 
 
+def _investors(row: str) -> list[str]:
+    block = re.search(r'Tbl-Row__item--investors"(.*?)(?:Tbl-Row__item--|\Z)', row, re.S)
+    if not block:
+        return []
+    names = [htmllib.unescape(n).strip()
+             for n in re.findall(r'data-tooltip-text="([^"]+)"', block.group(1))]
+    return [n for n in names if n and n.lower() != "more details"]
+
+
 def parse_rows(rendered_html: str) -> list[dict]:
-    """Linhas da tabela → [{slug, name, ticker, round, raised, category, date_text}]."""
+    """Linhas da tabela → [{slug, name, ticker, round, raised, category, date_text, investors}]."""
     rows = []
     for chunk in rendered_html.split('<li class="Tbl-Row Tbl-Row--usual"')[1:]:
         slug = re.search(r'Cll-Project__link"\s+href="/([^"/]+)/"', chunk)
@@ -122,6 +131,7 @@ def parse_rows(rendered_html: str) -> list[dict]:
             "raised": parse_money(_cell(chunk, "raised")),
             "category": _cell(chunk, "categories"),
             "date_text": _cell(chunk, "date"),
+            "investors": _investors(chunk),
         })
     return rows
 
@@ -171,7 +181,7 @@ def build_row(item: dict, project: dict, today: date) -> dict:
         "raise_date": (sale_date or today).isoformat(),
         "category": item.get("round") or None,
         "amount_usd": item.get("raised"),
-        "investors": [],
+        "investors": item.get("investors") or [],
         "source": "icodrops",
         "source_url": f"{BASE}/{item['slug']}/",
         "raw_post": text[:2000],

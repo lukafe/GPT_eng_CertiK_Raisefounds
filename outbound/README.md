@@ -25,6 +25,12 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
 - Também retenta, uma vez, empresas que ficaram `no_contacts` no enriquecimento antigo (raise ≤ 60 dias);
   como o domínio delas pode ter vindo de busca por nome, passam pelo portão de indústria.
 
+## Fonte de ICO: ICO Drops (desde out/2026, `sources/icodrops.py`)
+- Lê as listas de vendas futuras e ativas (TGE, IDO, IEO, presale, airdrop/points) e, para
+  cada projeto novo, a página do projeto (site oficial e descrição). Dedupe por URL, nome e
+  domínio; entra como empresa Web3 (tier `ico_other`) na mesma fila do enriquecimento.
+- Roda na etapa `fetch` no máximo a cada 6h. Amostra sem gravar: `python -m sources.icodrops --dump 10`.
+
 ## Controles no Supabase (`source_state`)
 | chave | efeito |
 |---|---|

@@ -14,10 +14,15 @@ PROJECT = (FIX / "icodrops_project.html").read_text()
 
 def test_parse_rows():
     rows = ico.parse_rows(ROWS)
-    assert [r["slug"] for r in rows] == ["clix", "thetanuts-finance"]
-    clix, thetanuts = rows
+    assert [r["slug"] for r in rows] == ["clix", "thetanuts-finance", "kalshi"]
+    clix, thetanuts, kalshi = rows
     assert clix == {"slug": "clix", "name": "CLIX", "ticker": "CLIX", "round": "TGE and Distribution",
-                    "raised": None, "category": "Lending", "date_text": "Upcoming"}
+                    "raised": None, "category": "Lending", "date_text": "Upcoming", "investors": []}
+    # formato real com quebras de linha dentro das células e investidores no tooltip
+    assert kalshi["name"] == "Kalshi" and kalshi["round"] == "Possible Retrodrop"
+    assert kalshi["raised"] == 3_020_000_000 and kalshi["category"] == "Predictions"
+    assert kalshi["investors"] == ["Andreessen Horowitz (a16z)", "Paradigm"]
+    assert kalshi["date_text"] == "from Q1, 2024"
     assert thetanuts["name"] == "Thetanuts Finance & Co"
     assert thetanuts["raised"] == 300_000 and thetanuts["round"] == "IDO on Poolz"
     assert thetanuts["date_text"] == "from Sep 14, 2026"
@@ -87,9 +92,9 @@ def test_fetch_icos_dedupes_and_skips_known(monkeypatch):
     monkeypatch.setattr(ico, "PAUSE_SECONDS", 0)
 
     result = ico.fetch_icos()
-    assert [r["name"] for r in inserted] == ["CLIX"]
-    assert result["listed"] == 2 and result["created"] == 1
-    assert ico.STATE_KEY in states and "1 empresas novas" in runs[0]
+    assert [r["name"] for r in inserted] == ["CLIX", "Kalshi"]
+    assert result["listed"] == 3 and result["created"] == 2
+    assert ico.STATE_KEY in states and "2 empresas novas" in runs[0]
 
 
 def test_fetch_icos_runs_at_most_every_six_hours(monkeypatch):
