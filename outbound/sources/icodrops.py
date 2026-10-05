@@ -4,8 +4,8 @@ Só leitura da página pública (o robots.txt do site não restringe nada). A li
 mesma chamada que o próprio site usa para paginar (JSON com o HTML das linhas). Para cada
 projeto novo, abre a página do projeto para pegar o site oficial (domínio) e a descrição.
 
-Grava em `companies` com source='icodrops', persona Web3, tier 'ico_other' (escada de
-startup pequena). Dedupe pela URL do projeto, pelo nome normalizado e pelo domínio, para não
+Grava em `companies` com source='icodrops' e persona Web3; o banco calcula o tier
+('ico_other', escada de startup pequena) a partir da rodada. Dedupe pela URL do projeto, pelo nome normalizado e pelo domínio, para não
 duplicar empresa que já veio do canal do CryptoRank. Fit: fonte 100% cripto, então entra
 tudo, exceto VC/fundo e setor claramente fora (fit.classify_crypto_source).
 
@@ -230,7 +230,7 @@ def build_row(item: dict, project: dict, today: date) -> dict:
         "fit_service": fit_service,
         "fit_score": fit_score,
         "persona_id": "web3",
-        "stage_tier": "ico_other",
+        # stage_tier é coluna calculada no banco a partir de category (rodadas de ICO → ico_other)
         "status": "queued" if fit_service else "no_fit",
     }
 
