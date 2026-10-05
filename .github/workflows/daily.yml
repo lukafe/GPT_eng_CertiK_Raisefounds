@@ -32,6 +32,7 @@ jobs:
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       MAX_PER_DAY: "40"
       COMPANIES_PER_DAY: "40"
+      TG_PHONE_REVEALS_PER_DAY: "5"   # telefones de decisores pelo waterfall do Apollo (~8 créditos cada)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

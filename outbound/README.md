@@ -31,6 +31,16 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
   domínio; entra como empresa Web3 (tier `ico_other`) na mesma fila do enriquecimento.
 - Roda na etapa `fetch` no máximo a cada 6h. Amostra sem gravar: `python -m sources.icodrops --dump 10`.
 
+## Telefones dos decisores para o Telegram (desde 05/10, `tg_phones.py`)
+
+- Depois do push, até `TG_PHONE_REVEALS_PER_DAY` (padrão 5) decisores Web3 sem telefone e sem Telegram
+  vão ao bulk_match do Apollo com `run_waterfall_phone` (~8 créditos por telefone achado).
+- O Apollo devolve os números no webhook (edge function `apollo-phone-webhook` →
+  `public.apollo_phone_ingest`, token no Vault); o `tg.lookup_batch` (de hora em hora, no Supabase)
+  confere o número no Telegram Finder e, se achar, o contato entra na fila do Telegram 2 dias depois do 1º email.
+- Quem o Apollo não acha vai para a busca reversa do Finder (email/LinkedIn → telefone, gasta crédito do Finder).
+- Primeira rodada (05/10, manual): 34 telefones em 41 decisores, 3 com Telegram visível pelo número.
+
 ## Controles no Supabase (`source_state`)
 | chave | efeito |
 |---|---|
