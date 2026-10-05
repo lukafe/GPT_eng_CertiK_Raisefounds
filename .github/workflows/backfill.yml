@@ -1,0 +1,38 @@
+name: Backfill raises (manual)
+
+# Lê o histórico do canal do CryptoRank para trás e grava os raises que faltam.
+# Só roda na mão (aba Actions ou API). Não gasta créditos do Apollo: só leitura + Supabase.
+# As empresas entram como 'backlog' (fora da fila) até serem liberadas.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Até quantos dias atrás"
+        default: "120"
+      status:
+        description: "Status das empresas novas (backlog = fora da fila; queued = entra na fila)"
+        default: "backlog"
+
+concurrency:
+  group: outbound-pipeline
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: outbound
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python sources/telegram_cryptorank.py --backfill "${{ inputs.days }}" --status "${{ inputs.status }}"
+      - name: Log da rodada
+        if: always()
+        run: cat log.txt 2>/dev/null || true
