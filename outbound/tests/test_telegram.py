@@ -151,3 +151,7 @@ def test_channel_digests_are_not_companies():
 def test_raise_whose_description_mentions_a_quarter_still_counts():
     text = "\u200b\u200b Acme $5M Seed Round ⚡️ 📑 About: Acme launches mainnet in Q4 2026."
     assert is_raise_post({"text": text})
+
+
+def test_legacy_raise_without_about_mentioning_a_quarter_still_counts():
+    assert is_raise_post({"text": "Acme has raised $10M in a Series A round led by X, mainnet in Q1 2027"})

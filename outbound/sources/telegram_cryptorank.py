@@ -33,7 +33,7 @@ START_MARKERS = ("insight", "top ", "top-", "digest", "weekly", "recap", "report
 # Resumos agregados do canal ("Q3 2026 Crypto Fundraising Highlights ... raised $3.7B across
 # 158 funding rounds", "Crypto payments funding grew nearly 6x") não são uma empresa
 DIGEST_RE = re.compile(
-    r"\bq[1-4]\s+20\d\d\b|\bhighlights\b|\bacross\s+\d+\s+(?:funding\s+)?(?:rounds|deals)\b"
+    r"\bhighlights\b|\bacross\s+\d+\s+(?:funding\s+)?(?:rounds|deals)\b"
     r"|\bfunding\s+(?:grew|fell|rose|dropped|doubled|surged)\b|\bprojects\s+raised\b",
     re.IGNORECASE)
 

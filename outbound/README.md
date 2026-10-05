@@ -38,7 +38,7 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
 | `apollo_seq_id` | sequência que recebe inscrições novas (sem ela, `APOLLO_SEQ_ID`) |
 | `email_ramp` | `on` liga a rampa 20 → 50 → 100/dia (nunca passa de `MAX_PER_DAY`) |
 | `email_daily_cap` | degrau atual da rampa |
-| `max_contacts_per_company` | pessoas por empresa (padrão 3) |
+| `max_contacts_per_company` | pessoas por empresa (padrão 10) |
 
 Trava de bounce: se os inscritos dos últimos 7 dias tiverem bounce ≥ 3% (mínimo 20),
 o push liga `push_paused` sozinho e registra o motivo em `runs`.
@@ -127,7 +127,7 @@ fuso do contato) — o cron só abastece a fila.
 
 ## Quando os créditos do Apollo ficarem curtos
 
-Cada pessoa revelada gasta 1 crédito de lead; `APOLLO_REVEALS_PER_RUN` (padrão 30) limita
+Cada pessoa revelada gasta 1 crédito de lead; `APOLLO_REVEALS_PER_RUN` (padrão 60) limita
 o gasto por rodada. O monitor mostra os créditos restantes e acende alerta abaixo de 100.
 
 ## Estados

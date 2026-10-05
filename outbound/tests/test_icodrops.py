@@ -52,11 +52,27 @@ def test_project_without_website_capsule_has_no_domain():
     assert project["website"] is None
 
 
-def test_company_domain_ignores_aggregators_and_social():
-    assert ico.company_domain("https://www.clix.money/app") == "clix.money"
+def test_company_domain_ignores_aggregators_social_exchanges_and_launchpads():
+    assert ico.company_domain("https://www.clix.money/app", "CLIX", "clix") == "clix.money"
     for url in ("https://dropstab.com/coins/usdai", "https://x.com/foo", "https://foo.gitbook.io/docs",
-                "https://linktr.ee/foo", None):
-        assert ico.company_domain(url) is None, url
+                "https://linktr.ee/foo", "https://www.binance.com/en/foo", "https://pump.fun/coin/x",
+                "https://app.uniswap.org/swap", "https://bit.ly/abc", None):
+        assert ico.company_domain(url, "Foo", "foo") is None, url
+
+
+def test_company_domain_must_match_project_name():
+    assert ico.company_domain("https://spacewaytoken.com/", "Spaceway Token", "spaceway-token") == "spacewaytoken.com"
+    assert ico.company_domain("https://www.worldxc.com/", "WorldX", "worldx") == "worldxc.com"
+    assert ico.company_domain("https://gno.land/", "Gno.land", "gno-land") == "gno.land"
+    assert ico.company_domain("https://mendel.network/", "Mendel", "mendel") == "mendel.network"
+    # site de outra empresa no lugar do site do projeto
+    assert ico.company_domain("https://randomcorp.io/", "Foo Protocol", "foo-protocol") is None
+
+
+def test_website_is_read_only_from_the_project_header():
+    page = PROJECT.replace('<span class="capsule__text">Website</span>', '<span class="capsule__text">Site</span>')
+    page += '<ul><li><a class="capsule" href="https://other.com/" data-capsule-link><span class="capsule__text">Website</span></a></li></ul>'
+    assert ico.parse_project_page(page)["website"] is None
 
 
 def test_build_row():
@@ -71,10 +87,14 @@ def test_build_row():
     assert "About: CLIX IDO" in row["raw_post"]
 
 
-def test_build_row_uses_sale_date_when_known():
-    item = ico.parse_rows(ROWS)[1]
+def test_build_row_keeps_queue_fair():
+    # data da venda e valor captado só no texto: não furam a fila do CryptoRank
+    item = ico.parse_rows(ROWS)[2]                    # Kalshi: US$ 3,02 bi, "from Q1, 2024"
     row = ico.build_row(item, {}, date(2026, 10, 5))
-    assert row["raise_date"] == "2026-09-14" and row["domain"] is None
+    assert row["raise_date"] == "2026-10-05" and row["amount_usd"] is None
+    assert "captado (ICO Drops): US$ 3,020,000,000" in row["raw_post"]
+    assert "investidores: Andreessen Horowitz (a16z), Paradigm" in row["raw_post"]
+    assert row["investors"] == ["Andreessen Horowitz (a16z)", "Paradigm"] and row["domain"] is None
 
 
 def test_fetch_icos_dedupes_and_skips_known(monkeypatch):
@@ -95,6 +115,58 @@ def test_fetch_icos_dedupes_and_skips_known(monkeypatch):
     assert [r["name"] for r in inserted] == ["CLIX", "Kalshi"]
     assert result["listed"] == 3 and result["created"] == 2
     assert ico.STATE_KEY in states and "2 empresas novas" in runs[0]
+
+
+def test_fetch_icos_failed_project_page_is_not_saved_and_state_is_kept(monkeypatch):
+    inserted, states = [], {}
+    monkeypatch.setattr(db, "get_state", lambda k: None)
+    monkeypatch.setattr(db, "set_state", lambda k, v: states.__setitem__(k, v))
+    monkeypatch.setattr(db, "log_run", lambda *a, **k: None)
+    monkeypatch.setattr(db, "company_exists_by_source_url", lambda url: False)
+    monkeypatch.setattr(db, "company_exists_by_name", lambda n: False)
+    monkeypatch.setattr(db, "company_exists_by_domain", lambda d: d == "clix.money")
+    monkeypatch.setattr(db, "insert_company", lambda row: inserted.append(row))
+    monkeypatch.setattr(ico, "fetch_list_page", lambda cat, page: ROWS)
+    monkeypatch.setattr(ico, "PAUSE_SECONDS", 0)
+
+    def project(slug):
+        if slug == "thetanuts-finance":
+            raise RuntimeError("429")
+        return PROJECT
+
+    monkeypatch.setattr(ico, "fetch_project_page", project)
+    ico.fetch_icos()
+    # CLIX já existe pelo domínio (vira "visto"), Thetanuts falhou (tenta de novo), Kalshi entra
+    assert [r["name"] for r in inserted] == ["Kalshi"]
+    assert "clix" in states[ico.SEEN_KEY] and "thetanuts-finance" not in states[ico.SEEN_KEY]
+    assert ico.STATE_KEY in states
+
+
+def test_fetch_icos_caps_project_pages_per_run(monkeypatch):
+    inserted = []
+    monkeypatch.setattr(db, "get_state", lambda k: None)
+    monkeypatch.setattr(db, "set_state", lambda k, v: None)
+    monkeypatch.setattr(db, "log_run", lambda *a, **k: None)
+    monkeypatch.setattr(db, "company_exists_by_source_url", lambda url: False)
+    monkeypatch.setattr(db, "company_exists_by_name", lambda n: False)
+    monkeypatch.setattr(db, "company_exists_by_domain", lambda d: False)
+    monkeypatch.setattr(db, "insert_company", lambda row: inserted.append(row))
+    monkeypatch.setattr(ico, "fetch_list_page", lambda cat, page: ROWS)
+    monkeypatch.setattr(ico, "fetch_project_page", lambda slug: PROJECT)
+    monkeypatch.setattr(ico, "PAUSE_SECONDS", 0)
+    monkeypatch.setattr(ico, "MAX_PROJECT_PAGES_PER_RUN", 2)
+    ico.fetch_icos()
+    assert len(inserted) == 2
+
+
+def test_list_projects_stops_when_site_repeats_last_page(monkeypatch):
+    full = ROWS * 17                              # 51 linhas: página "cheia" e repetida
+    calls = []
+    monkeypatch.setattr(ico, "PER_PAGE", 3)
+    monkeypatch.setattr(ico, "fetch_list_page", lambda cat, page: calls.append((cat, page)) or full)
+    projects = ico.list_projects()
+    assert [p["slug"] for p in projects] == ["clix", "thetanuts-finance", "kalshi"]
+    assert calls == [("upcoming-ico", 1), ("upcoming-ico", 2), ("active-ico", 1)]
 
 
 def test_fetch_icos_runs_at_most_every_six_hours(monkeypatch):

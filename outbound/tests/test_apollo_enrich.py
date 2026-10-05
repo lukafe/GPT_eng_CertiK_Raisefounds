@@ -378,3 +378,15 @@ def test_retry_of_old_company_goes_through_industry_gate(monkeypatch, fake_db):
     ready = ae.enrich_company({"id": 10, "name": "Pons", "domain": "pons.com",
                                "status": "no_contacts"}, {"reveals": 60})
     assert ready == 0 and fake_db["company_updates"][-1]["status"] == "no_fit"
+
+
+def test_rank_people_people_ops_support_and_untitled_never_enter():
+    people = [_p("cpo", "Chief People Officer"), _p("none", ""), _p("hop", "Head of People"),
+              _p("cs", "Customer Success Manager"), _p("fl", "Freelancer"), _p("tr", "Trainee"),
+              _p("se", "Support Engineer"), _p("adv", "Advisor to the CEO"), _p("pm", "Product Manager")]
+    assert [p["id"] for p in ae.rank_people(people, "small")] == ["pm"]
+
+
+def test_rank_people_founder_with_extra_titles_stays_decision_maker():
+    people = [_p("cto", "CTO"), _p("fa", "Founder & CEO, Angel Investor"), _p("bm", "CEO & Board Member")]
+    assert [p["id"] for p in ae.rank_people(people, "small")] == ["fa", "bm", "cto"]

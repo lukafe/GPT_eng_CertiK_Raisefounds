@@ -64,11 +64,12 @@ APOLLO_NEVER = ("marketing", "sales", "business development", "bizdev", "hr", "h
                 "business developer", "biz dev", "coordinator")
 
 # Quem não é do time ou não repassa o assunto: nunca entra, nem para completar as vagas.
-NOT_TEAM = ("hr", "human resources", "people operations", "people partner", "recruit", "recruiter",
-            "recruiting", "recruitment", "talent",
-            "intern", "internship", "assistant", "support", "customer support", "ambassador",
-            "moderator", "advisor", "adviser", "investor", "board member", "consultant",
-            "contractor", "freelance", "volunteer")
+NOT_TEAM = ("hr", "hrbp", "chro", "human resources", "people", "people operations", "people ops",
+            "recruit", "recruiter", "recruiting", "recruitment", "talent",
+            "intern", "internship", "trainee", "apprentice", "student", "assistant",
+            "support", "customer support", "customer success", "ambassador", "moderator",
+            "advisor", "adviser", "investor", "board member", "consultant", "contractor",
+            "freelance", "freelancer", "volunteer")
 # Ordem para completar as vagas depois dos decisores: técnica e produto primeiro.
 FILLER_ORDER = (
     ("security", "engineer", "engineering", "developer", "devops", "protocol", "blockchain",
@@ -178,18 +179,37 @@ def role_level(title: str | None) -> str:
     return "other"
 
 
+def title_parts(title: str | None) -> list[str]:
+    """'Founder & CEO, Angel Investor' → ['Founder', 'CEO', 'Angel Investor']."""
+    parts = re.split(r"\s*(?:[,&|/;]|\band\b|\s[-–]\s)\s*", (title or "").strip(), flags=re.I)
+    return [p for p in parts if p]
+
+
+def decision_rung(title: str | None, tier: str) -> int | None:
+    """Degrau da escada de decisores (0 = topo) pelo melhor pedaço do cargo; None = não é
+    decisor. Um pedaço vetado ('Angel Investor') não tira o decisor de 'Founder & CEO'."""
+    best = None
+    for part in title_parts(title):
+        if is_never(part) or is_not_team(part):
+            continue
+        for i, rung in enumerate(TIER_LADDERS[tier]):
+            if _title_matches(part, rung):
+                best = i if best is None else min(best, i)
+                break
+    return best
+
+
 def rank_people(people: list[dict], tier: str) -> list[dict]:
     """Decisores primeiro (escada do tier); depois o resto do time, técnica e produto antes de
-    operações, BD e marketing. Quem não é do time (RH, estagiário, advisor...) nunca entra."""
-    team = [p for p in people if not is_not_team(p.get("title"))]
-    decision_pool = [p for p in team if not is_never(p.get("title"))]
-    ranked: list[dict] = []
-    for rung in TIER_LADDERS[tier]:
-        ranked.extend(p for p in decision_pool
-                      if p not in ranked and _title_matches(p.get("title"), rung))
-    rest = [p for p in team if p not in ranked]
+    operações, BD e marketing. Nunca entram: quem não é do time ou não repassa (RH/People,
+    estagiário, advisor, investidor...) e quem não tem cargo."""
+    ranked = sorted(((decision_rung(p.get("title"), tier), i, p) for i, p in enumerate(people)),
+                    key=lambda x: (x[0] is None, x[0] or 0, x[1]))
+    decision = [p for rung, _, p in ranked if rung is not None]
+    rest = [p for rung, _, p in ranked
+            if rung is None and (p.get("title") or "").strip() and not is_not_team(p.get("title"))]
     rest.sort(key=lambda p: filler_rank(p.get("title")))  # estável: mantém a ordem do Apollo
-    return ranked + rest
+    return decision + rest
 
 
 def email_domain_ok(email: str, domain: str) -> bool:

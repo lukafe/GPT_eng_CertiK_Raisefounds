@@ -13,6 +13,7 @@ Roda junto da leitura do CryptoRank (etapa fetch), no máximo a cada 6 horas.
 """
 
 import html as htmllib
+import json
 import re
 import sys
 import time
@@ -28,16 +29,25 @@ CATEGORIES = ("upcoming-ico", "active-ico")
 PER_PAGE = 50
 MAX_PAGES = 10                # 500 por lista; hoje são ~250 futuras e ~50 ativas
 MIN_HOURS_BETWEEN_RUNS = 6
+MAX_PROJECT_PAGES_PER_RUN = 120   # o resto fica para a rodada seguinte (6h depois)
 STATE_KEY = "icodrops_last_run"
+SEEN_KEY = "icodrops_seen"        # projetos já vistos e descartados (duplicata, VC): não reabre
 STEP = "fetch_icos"
 PAUSE_SECONDS = 0.5           # entre páginas de projeto, para não pesar no site
 
-# Sites que não são o domínio da empresa (agregadores, redes, hospedagem de docs)
+# Sites que não são o domínio da empresa: agregadores, redes, hospedagem de docs,
+# encurtadores, corretoras e launchpads (o "Website" às vezes aponta para a venda)
 NOT_COMPANY_DOMAINS = (
     "icodrops.com", "dropstab.com", "cryptorank.io", "coinmarketcap.com", "coingecko.com",
     "t.me", "telegram.me", "x.com", "twitter.com", "discord.gg", "discord.com", "medium.com",
     "github.com", "linkedin.com", "youtube.com", "linktr.ee", "gitbook.io", "notion.site",
-    "google.com", "substack.com", "mirror.xyz",
+    "google.com", "substack.com", "mirror.xyz", "bit.ly", "tinyurl.com", "linkin.bio",
+    "binance.com", "coinbase.com", "okx.com", "bybit.com", "kucoin.com", "gate.io", "gate.com",
+    "mexc.com", "bitget.com", "htx.com", "kraken.com", "bingx.com", "uniswap.org", "pump.fun",
+    "coinlist.co", "daomaker.com", "polkastarter.com", "seedify.fund", "kommunitas.net",
+    "poolz.finance", "binstarter.io", "kingdomstarter.io", "legion.cc", "echo.xyz",
+    "buidlpad.com", "fjordfoundry.com", "galxe.com", "zealy.io", "taskon.xyz", "layer3.xyz",
+    "questn.com", "gleam.io", "eesee.io", "spores.app", "bsclaunch.org", "wepad.io",
 )
 
 MONTHS = {m: i for i, m in enumerate(
@@ -141,7 +151,8 @@ def parse_project_page(page_html: str) -> dict:
     links: dict[str, str] = {}
     block = page_html.split("Project-Page-Header__links-list", 1)
     if len(block) == 2:
-        for a in re.finditer(r'<a\s+class="capsule[^"]*"\s+href="([^"]+)"(.*?)</a>', block[1], re.S):
+        header = block[1].split("</ul>", 1)[0]   # só a lista de links do cabeçalho do projeto
+        for a in re.finditer(r'<a\s+class="capsule[^"]*"\s+href="([^"]+)"(.*?)</a>', header, re.S):
             label = re.search(r'capsule__text"[^>]*>(.*?)<', a.group(2), re.S)
             key = _text(label.group(1)).lower() if label else ""
             if key and key not in links:
@@ -155,12 +166,33 @@ def parse_project_page(page_html: str) -> dict:
     return {"website": website, "description": description[:800], "links": links}
 
 
-def company_domain(website: str | None) -> str | None:
-    """Domínio do site oficial; agregador, rede social ou hospedagem de docs não vale."""
+def _alnum(text: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def domain_matches_project(domain: str, name: str, slug: str = "") -> bool:
+    """O domínio tem que ser do projeto: o nome principal do domínio (clix em clix.money,
+    worldxc em worldxc.com) bate com o nome ou o slug do projeto. Evita gravar o domínio de
+    uma corretora ou launchpad que o ICO Drops pôs como "Website"."""
+    labels = domain.lower().split(".")
+    core = _alnum(labels[-2] if len(labels) >= 2 else labels[0])
+    candidates = {_alnum(name), _alnum(normalize_name(name)), _alnum(slug)}
+    first_word = _alnum((normalize_name(name) or name or "").split(" ")[0] if name else "")
+    if len(first_word) >= 4:
+        candidates.add(first_word)
+    candidates.discard("")
+    return bool(core) and any(c in core or (len(core) >= 3 and core in c) for c in candidates)
+
+
+def company_domain(website: str | None, name: str = "", slug: str = "") -> str | None:
+    """Domínio do site oficial; agregador, rede social, corretora, launchpad ou domínio que não
+    bate com o nome do projeto não vale (sem domínio, o Apollo resolve pelo nome com cuidado)."""
     domain = domain_from_url(website)
     if not domain:
         return None
     if any(domain == d or domain.endswith("." + d) for d in NOT_COMPANY_DOMAINS):
+        return None
+    if name and not domain_matches_project(domain, name, slug):
         return None
     return domain
 
@@ -168,19 +200,29 @@ def company_domain(website: str | None) -> str | None:
 def build_row(item: dict, project: dict, today: date) -> dict:
     """Linha de companies para um projeto do ICO Drops."""
     description = project.get("description") or ""
+    extras = []
+    if item.get("date_text"):
+        extras.append(f"data: {item['date_text']}")
+    if item.get("raised"):
+        extras.append(f"captado (ICO Drops): US$ {item['raised']:,}")
+    if item.get("investors"):
+        extras.append("investidores: " + ", ".join(item["investors"][:8]))
     text = (f"{item['name']}" + (f" ({item['ticker']})" if item.get("ticker") else "")
             + f" · {item.get('round') or 'token sale'} · {item.get('category') or ''} · ICO Drops"
+            + (" · " + " · ".join(extras) if extras else "")
             + (f"\nAbout: {description}" if description else ""))
     fit_service, fit_score = classify_crypto_source(
         " ".join(filter(None, [item.get("category"), item.get("round"), description])))
-    sale_date = parse_sale_date(item.get("date_text"))
     return {
         "name": item["name"],
         "name_normalized": normalize_name(item["name"]),
-        "domain": company_domain(project.get("website")),
-        "raise_date": (sale_date or today).isoformat(),
+        "domain": company_domain(project.get("website"), item["name"], item.get("slug", "")),
+        # Dia em que achamos o projeto (a data da venda pode ser futura ou de anos atrás e
+        # bagunçaria a fila); o valor captado vai só no texto: no ICO Drops ele às vezes é o
+        # total de VC da empresa, e furaria a fila de prioridade por tamanho de rodada.
+        "raise_date": today.isoformat(),
         "category": item.get("round") or None,
-        "amount_usd": item.get("raised"),
+        "amount_usd": None,
         "investors": item.get("investors") or [],
         "source": "icodrops",
         "source_url": f"{BASE}/{item['slug']}/",
@@ -210,6 +252,13 @@ def list_projects() -> list[dict]:
     return list(seen.values())
 
 
+def _load_seen() -> set[str]:
+    try:
+        return set(json.loads(db.get_state(SEEN_KEY) or "[]"))
+    except (ValueError, TypeError):
+        return set()
+
+
 def fetch_icos(force: bool = False) -> dict:
     """Etapa 1b: ICO Drops → companies (só projetos novos)."""
     now = datetime.now(timezone.utc)
@@ -221,38 +270,52 @@ def fetch_icos(force: bool = False) -> dict:
         except ValueError:
             pass
 
-    projects = list_projects()
-    created = with_domain = vcs = no_fit = known = errors = 0
-    for item in projects:
-        url = f"{BASE}/{item['slug']}/"
-        normalized = normalize_name(item["name"])
-        if not normalized or db.company_exists_by_source_url(url) or db.company_exists_by_name(normalized):
-            known += 1
-            continue
-        if is_vc_or_fund(item["name"], ""):
-            vcs += 1
-            continue
-        try:
-            project = parse_project_page(fetch_project_page(item["slug"]))
-            time.sleep(PAUSE_SECONDS)
-        except Exception as e:  # noqa: BLE001  página do projeto fora: fica sem domínio
-            log(STEP, f"página de {item['slug']} falhou: {e}")
-            project, errors = {}, errors + 1
-        row = build_row(item, project, now.date())
-        if row["domain"] and db.company_exists_by_domain(row["domain"]):
-            known += 1
-            continue
-        db.insert_company(row)
-        created += 1
-        with_domain += bool(row["domain"])
-        no_fit += row["status"] == "no_fit"
+    seen = _load_seen()
+    created = with_domain = vcs = no_fit = known = errors = pages = deferred = 0
+    projects: list[dict] = []
+    try:
+        projects = list_projects()
+        for item in projects:
+            slug, url = item["slug"], f"{BASE}/{item['slug']}/"
+            normalized = normalize_name(item["name"])
+            if slug in seen or not normalized or db.company_exists_by_source_url(url) \
+                    or db.company_exists_by_name(normalized):
+                known += 1
+                continue
+            if is_vc_or_fund(item["name"], ""):
+                vcs += 1
+                seen.add(slug)
+                continue
+            if pages >= MAX_PROJECT_PAGES_PER_RUN:
+                deferred += 1  # fica para a próxima rodada
+                continue
+            try:
+                pages += 1
+                project = parse_project_page(fetch_project_page(slug))
+                time.sleep(PAUSE_SECONDS)
+                row = build_row(item, project, now.date())
+                if row["domain"] and db.company_exists_by_domain(row["domain"]):
+                    known += 1
+                    seen.add(slug)
+                    continue
+                db.insert_company(row)
+            except Exception as e:  # noqa: BLE001  não grava: tenta de novo na próxima rodada
+                errors += 1
+                log(STEP, f"{slug}: {e}")
+                continue
+            created += 1
+            with_domain += bool(row["domain"])
+            no_fit += row["status"] == "no_fit"
+    finally:
+        db.set_state(SEEN_KEY, json.dumps(sorted(seen)))
+        db.set_state(STATE_KEY, now.isoformat())
 
-    db.set_state(STATE_KEY, now.isoformat())
     detail = (f"{len(projects)} vendas listadas, {created} empresas novas ({with_domain} com domínio), "
               f"{known} já conhecidas, {vcs} VCs/fundos ignorados, {no_fit} sem fit"
-              + (f", {errors} páginas com erro" if errors else ""))
+              + (f", {errors} com erro (tenta de novo na próxima)" if errors else "")
+              + (f", {deferred} ficam para a próxima rodada" if deferred else ""))
     log(STEP, detail)
-    db.log_run(STEP, True, detail)
+    db.log_run(STEP, errors == 0 or created > 0, detail)
     return {"listed": len(projects), "created": created, "with_domain": with_domain}
 
 

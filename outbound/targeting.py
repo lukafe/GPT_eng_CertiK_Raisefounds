@@ -6,7 +6,7 @@ em out/2026 quando o enriquecimento passou a ser 100% pelo Apollo.
 
 # Máximo de contatos abordados por empresa: 10 pessoas da mesma empresa recebendo
 # o mesmo email no mesmo dia parece spam interno e queima a marca.
-MAX_CONTACTS_PER_COMPANY = 3
+MAX_CONTACTS_PER_COMPANY = 10  # out/2026: o máximo do time, decisores primeiro
 
 # Decisor certo depende do TAMANHO da empresa (tier), estimado pelo tipo de rodada
 # (e, quando houver, pelo tamanho do time).
