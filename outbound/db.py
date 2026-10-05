@@ -55,6 +55,14 @@ def company_exists_by_domain(domain: str) -> bool:
     return bool(client().table("companies").select("id").eq("domain", domain).limit(1).execute().data)
 
 
+def min_source_message_id(source: str) -> int | None:
+    """Menor id de post já gravado para a fonte (ponto de partida do backfill)."""
+    data = (client().table("companies").select("source_message_id")
+            .eq("source", source).not_.is_("source_message_id", "null")
+            .order("source_message_id").limit(1).execute().data)
+    return data[0]["source_message_id"] if data else None
+
+
 def insert_company(row: dict) -> None:
     client().table("companies").insert(row).execute()
 

@@ -25,6 +25,15 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
 - Também retenta, uma vez, empresas que ficaram `no_contacts` no enriquecimento antigo (raise ≤ 60 dias);
   como o domínio delas pode ter vindo de busca por nome, passam pelo portão de indústria.
 
+## Histórico do CryptoRank (backfill, desde 05/10)
+
+- `backfill.yml` (manual) roda `python sources/telegram_cryptorank.py --backfill 120 --status backlog`:
+  lê o canal para trás a partir do menor id já gravado até N dias atrás e grava os raises que faltam.
+- Retoma de onde parou (`source_state.cryptorank_backfill_before`), no máximo 60 páginas por rodada.
+- As empresas entram como `backlog` (fora da fila) até serem liberadas, porque a copy da sequência
+  fala em "raise recente".
+- A leitura normal (de 2 em 2 horas) também passa a pular empresa com domínio já conhecido.
+
 ## Fonte de ICO: ICO Drops (desde out/2026, `sources/icodrops.py`)
 - Lê as listas de vendas futuras e ativas (TGE, IDO, IEO, presale, airdrop/points) e, para
   cada projeto novo, a página do projeto (site oficial e descrição). Dedupe por URL, nome e

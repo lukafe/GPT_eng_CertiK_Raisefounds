@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from sources import telegram_cryptorank as tc
+
 from sources.telegram_cryptorank import (domain_from_url, is_raise_post,
                                          normalize_name, parse_posts, parse_raise)
 
@@ -155,3 +157,52 @@ def test_raise_whose_description_mentions_a_quarter_still_counts():
 
 def test_legacy_raise_without_about_mentioning_a_quarter_still_counts():
     assert is_raise_post({"text": "Acme has raised $10M in a Series A round led by X, mainnet in Q1 2027"})
+
+
+# --- backfill (últimos meses do canal) ------------------------------------------------
+
+def _post(mid, days_ago, text):
+    from datetime import datetime, timedelta, timezone
+    return {"message_id": mid, "posted_at": datetime.now(timezone.utc) - timedelta(days=days_ago),
+            "text": text, "links": []}
+
+
+def _raise_text(name):
+    return f"{name} $5M Seed Round ⚡ 📄 About: {name} builds a DeFi lending protocol 🤝 Investors: Alpha (Lead)"
+
+
+def test_backfill_reads_back_until_cutoff_and_saves_as_backlog(monkeypatch):
+    pages = {
+        3485: [_post(3480, 60, _raise_text("Gamma")), _post(3481, 59, "🔍 INSIGHT: weekly recap")],
+        3480: [_post(3470, 130, _raise_text("TooOld")), _post(3475, 110, _raise_text("Beta"))],
+    }
+    asked, inserted, states, runs = [], [], {}, []
+    monkeypatch.setattr(tc, "fetch_page", lambda before=None: asked.append(before) or before)
+    monkeypatch.setattr(tc, "parse_posts", lambda key: pages.get(key, []))
+    monkeypatch.setattr(tc, "resolve_website", lambda url: None)
+    monkeypatch.setattr(tc.db, "get_state", lambda k: None)
+    monkeypatch.setattr(tc.db, "set_state", lambda k, v: states.__setitem__(k, v))
+    monkeypatch.setattr(tc.db, "min_source_message_id", lambda src: 3485)
+    monkeypatch.setattr(tc.db, "company_exists_by_message", lambda mid: False)
+    monkeypatch.setattr(tc.db, "company_exists_by_name", lambda n: False)
+    monkeypatch.setattr(tc.db, "company_exists_by_domain", lambda d: False)
+    monkeypatch.setattr(tc.db, "insert_company", lambda row: inserted.append(row))
+    monkeypatch.setattr(tc.db, "log_run", lambda step, ok, detail="": runs.append((step, detail)))
+
+    result = tc.backfill_raises(days=120)
+    assert asked == [3485, 3480]                       # parou ao passar da data de corte
+    assert [r["name"] for r in inserted] == ["Beta", "Gamma"]
+    assert all(r["status"] == "backlog" for r in inserted)
+    assert states[tc.BACKFILL_STATE] == "3470" and result["done"] is True
+    assert runs[0][0] == "backfill_raises"
+
+
+def test_backfill_resumes_from_saved_state_and_respects_page_limit(monkeypatch):
+    asked = []
+    monkeypatch.setattr(tc, "fetch_page", lambda before=None: asked.append(before) or before)
+    monkeypatch.setattr(tc, "parse_posts", lambda key: [_post(key - 20, 10, "🔍 INSIGHT: recap")])
+    monkeypatch.setattr(tc.db, "get_state", lambda k: "3000" if k == tc.BACKFILL_STATE else None)
+    monkeypatch.setattr(tc.db, "set_state", lambda k, v: None)
+    monkeypatch.setattr(tc.db, "log_run", lambda *a, **k: None)
+    result = tc.backfill_raises(days=120, max_pages=3)
+    assert asked == [3000, 2980, 2960] and result["done"] is False

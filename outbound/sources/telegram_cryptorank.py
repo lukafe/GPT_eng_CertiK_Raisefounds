@@ -300,10 +300,9 @@ def normalize_name(name: str) -> str:
 
 # --- etapa do pipeline -----------------------------------------------------------
 
-def fetch_raises() -> dict:
-    """Etapa 1: canal do CryptoRank → upsert em companies (novas apenas)."""
-    since = int(db.get_state("last_message_id") or 0)
-    posts = fetch_new_raises(since)
+def save_raises(posts: list[dict], status: str = "queued", step: str = "fetch_raises") -> dict:
+    """Posts do canal → empresas novas em companies. `status` é o das que passam no fit
+    ('queued' entra na fila; 'backlog' fica guardada até ser liberada)."""
     raises = [r for r in (parse_raise(p) for p in posts if is_raise_post(p)) if r]
 
     from fit import classify_crypto_source
@@ -314,7 +313,7 @@ def fetch_raises() -> dict:
         post_text = (posts_by_msg.get(r["source_message_id"]) or {}).get("text", "")
         if is_vc_or_fund(r["project_name"], post_text):
             vcs_skipped += 1
-            log("fetch_raises", f"VC/fundo ignorado: {r['project_name']}")
+            log(step, f"VC/fundo ignorado: {r['project_name']}")
             continue
         normalized = normalize_name(r["project_name"])
         if db.company_exists_by_message(r["source_message_id"]) or \
@@ -326,11 +325,12 @@ def fetch_raises() -> dict:
         fit_service, fit_score = classify_crypto_source(post_text)
         if fit_service is None:
             no_fit += 1
-            log("fetch_raises", f"sem fit de serviço (score={fit_score}): "
-                                f"{r['project_name']}")
+            log(step, f"sem fit de serviço (score={fit_score}): {r['project_name']}")
 
         website = resolve_website(r["cryptorank_url"]) if fit_service else None
         domain = domain_from_url(website)
+        if domain and db.company_exists_by_domain(domain):
+            continue
         row = {
             "name": r["project_name"],
             "name_normalized": normalized,
@@ -347,23 +347,83 @@ def fetch_raises() -> dict:
             "fit_service": fit_service,
             "fit_score": fit_score,
             # Sem domínio também entra na fila: o Apollo resolve pelo nome
-            "status": "queued" if fit_service else "no_fit",
+            "status": status if fit_service else "no_fit",
         }
         db.insert_company(row)
         created += 1
         if domain:
             with_domain += 1
+    return {"raises": len(raises), "created": created, "with_domain": with_domain,
+            "vcs_skipped": vcs_skipped, "no_fit": no_fit}
+
+
+def fetch_raises() -> dict:
+    """Etapa 1: canal do CryptoRank → upsert em companies (novas apenas)."""
+    since = int(db.get_state("last_message_id") or 0)
+    posts = fetch_new_raises(since)
+    stats = save_raises(posts)
 
     if posts:
         db.set_state("last_message_id", str(max(p["message_id"] for p in posts)))
 
-    detail = (f"{len(posts)} posts novos, {len(raises)} raises, "
-              f"{created} empresas criadas ({with_domain} com domínio), "
-              f"{vcs_skipped} VCs/fundos ignorados, {no_fit} sem fit")
+    detail = (f"{len(posts)} posts novos, {stats['raises']} raises, "
+              f"{stats['created']} empresas criadas ({stats['with_domain']} com domínio), "
+              f"{stats['vcs_skipped']} VCs/fundos ignorados, {stats['no_fit']} sem fit")
     log("fetch_raises", detail)
     db.log_run("fetch_raises", True, detail)
-    return {"posts": len(posts), "raises": len(raises),
-            "created": created, "with_domain": with_domain}
+    return {"posts": len(posts), "raises": stats["raises"],
+            "created": stats["created"], "with_domain": stats["with_domain"]}
+
+
+# --- histórico (backfill) ----------------------------------------------------------
+
+BACKFILL_STATE = "cryptorank_backfill_before"   # menor id já lido no backfill
+BACKFILL_MAX_PAGES = 60                          # ~20 posts por página
+
+
+def backfill_raises(days: int = 120, status: str = "backlog",
+                    max_pages: int = BACKFILL_MAX_PAGES) -> dict:
+    """Lê o canal para trás (?before=) até `days` dias atrás e grava os raises que faltam.
+
+    Começa do menor id que o backfill já leu (source_state) ou, na primeira vez, do menor
+    id que o pipeline já tem; para quando o post mais antigo da página passa da data de corte.
+    As empresas entram com `status` ('backlog' por padrão: não vão para a fila até serem
+    liberadas, porque a copy da sequência fala em "raise recente").
+    """
+    from datetime import timedelta
+
+    step = "backfill_raises"
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    before = int(db.get_state(BACKFILL_STATE) or 0) or db.min_source_message_id("telegram_cryptorank")
+    collected: list[dict] = []
+    pages = 0
+    reached = False
+    while pages < max_pages:
+        posts = parse_posts(fetch_page(before))
+        pages += 1
+        if not posts:
+            reached = True
+            break
+        collected += [p for p in posts if p["posted_at"] and p["posted_at"] >= cutoff]
+        oldest = posts[0]
+        before = oldest["message_id"]
+        if oldest["posted_at"] and oldest["posted_at"] < cutoff:
+            reached = True
+            break
+    collected.sort(key=lambda p: p["message_id"])
+    stats = save_raises(collected, status=status, step=step)
+    if before:
+        db.set_state(BACKFILL_STATE, str(before))
+
+    oldest_day = collected[0]["posted_at"].date().isoformat() if collected else "-"
+    detail = (f"{len(collected)} posts até {days} dias atrás (mais antigo: {oldest_day}), "
+              f"{stats['raises']} raises, {stats['created']} empresas criadas "
+              f"({stats['with_domain']} com domínio, status '{status}'), "
+              f"{stats['vcs_skipped']} VCs/fundos ignorados, {stats['no_fit']} sem fit"
+              + ("" if reached else f"; parou em {pages} páginas, roda de novo para continuar"))
+    log(step, detail)
+    db.log_run(step, True, detail)
+    return {**stats, "posts": len(collected), "pages": pages, "done": reached}
 
 
 if __name__ == "__main__":
@@ -372,5 +432,11 @@ if __name__ == "__main__":
         for p in parse_posts(fetch_page())[-10:]:
             print(f"\n--- id={p['message_id']} at={p['posted_at']} "
                   f"raise={is_raise_post(p)}\n{p['text'][:500]}\nlinks: {p['links']}")
+    elif "--backfill" in sys.argv:
+        # python sources/telegram_cryptorank.py --backfill 120 [--status queued]
+        i = sys.argv.index("--backfill")
+        days = int(sys.argv[i + 1]) if len(sys.argv) > i + 1 and sys.argv[i + 1].isdigit() else 120
+        status = sys.argv[sys.argv.index("--status") + 1] if "--status" in sys.argv else "backlog"
+        print(json.dumps(backfill_raises(days=days, status=status)))
     else:
-        print("Uso: python sources/telegram_cryptorank.py --dump")
+        print("Uso: python sources/telegram_cryptorank.py --dump | --backfill DIAS [--status queued]")
