@@ -9,6 +9,7 @@ import sys
 from datetime import datetime, timezone
 
 import apollo
+import apollo_enrich
 import db
 from common import env, http_call, log
 
@@ -185,6 +186,8 @@ def main() -> int:
             profile, accounts, campaigns,
             env("APOLLO_MAILBOX_ID", required=False), current_id, apollo.daily_cap(), paused,
         )
+        # o calendário do monitor usa isso para prever quando cada empresa da fila é enriquecida
+        live["live_data"]["companies_per_day"] = apollo_enrich.companies_per_day()
         db.client().table("integrations").upsert(
             {"id": "apollo", "label": "Apollo", "sort": 10, **integration, "checked_at": now}
         ).execute()

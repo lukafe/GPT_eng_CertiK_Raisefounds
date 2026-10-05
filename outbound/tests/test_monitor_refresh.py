@@ -115,12 +115,14 @@ def test_main_writes_and_logs(monkeypatch):
     monkeypatch.setattr(mr.db, "client", lambda: C())
     monkeypatch.setattr(mr.db, "log_run", lambda step, ok, detail="": calls["runs"].append((step, ok, detail)))
     monkeypatch.setenv("APOLLO_MAILBOX_ID", "6908fa83a6eb29001dd5e9c7")
+    monkeypatch.setenv("COMPANIES_PER_DAY", "40")
 
     assert mr.main() == 0
     table, row = calls["upsert"][0]
     assert table == "integrations" and row["id"] == "apollo" and row["status"] == "atencao"
     table, row = calls["update"][0]
     assert table == "channel_accounts" and row["live_status"] == "ok" and "live_checked_at" in row
+    assert row["live_data"]["companies_per_day"] == 40
     assert calls["runs"][0][0] == "monitor_apollo" and calls["runs"][0][1] is True
 
 
