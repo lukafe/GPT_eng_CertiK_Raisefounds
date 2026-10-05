@@ -28,6 +28,7 @@ jobs:
       APOLLO_SEQ_ID: ${{ secrets.APOLLO_SEQ_ID }}
       APOLLO_MAILBOX_ID: ${{ secrets.APOLLO_MAILBOX_ID }}
       MAX_PER_DAY: "40"   # mesmo teto do daily.yml; aqui só serve para o monitor exibir
+      COMPANIES_PER_DAY: "40"   # idem: o calendário do monitor usa para prever o enriquecimento
       NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
     steps:

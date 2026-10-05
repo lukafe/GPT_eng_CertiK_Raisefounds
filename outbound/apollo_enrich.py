@@ -415,9 +415,14 @@ def retry_candidates(limit: int) -> list[dict]:
     return keep[:limit]
 
 
+def companies_per_day() -> int:
+    """Empresas enriquecidas por rodada diária (COMPANIES_PER_DAY do workflow)."""
+    return int(env("COMPANIES_PER_DAY", required=False, default="10"))
+
+
 def enrich_contacts() -> dict:
     """Etapa 2: empresas na fila (e as que ficaram sem contato) → Apollo → contatos."""
-    per_day = int(env("COMPANIES_PER_DAY", required=False, default="10"))
+    per_day = companies_per_day()
     per_run = int(env("APOLLO_REVEALS_PER_RUN", required=False, default=str(DEFAULT_REVEALS_PER_RUN)))
     budget = {"reveals": per_run}
 
