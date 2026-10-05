@@ -1,4 +1,4 @@
-"""Orquestrador diário: fetch_raises → enrich_contacts → push_to_apollo → sync_status.
+"""Orquestrador diário: fetch_raises → enrich_contacts → push_to_apollo → phone_reveal → sync_status.
 
 --dry-run executa tudo menos as escritas no Apollo.
 """
@@ -25,7 +25,7 @@ def run_step(name: str, fn) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="pula o push ao Apollo")
-    parser.add_argument("--steps", default="fetch,enrich,push,sync",
+    parser.add_argument("--steps", default="fetch,enrich,push,phones,sync",
                         help="etapas a rodar (ex.: --steps fetch | --steps sync)")
     args = parser.parse_args()
     steps = {s.strip() for s in args.steps.split(",") if s.strip()}
@@ -35,6 +35,7 @@ def main() -> None:
     import apollo
     import apollo_enrich
     import db
+    import tg_phones
     from sources import icodrops, telegram_cryptorank
 
     if not db.acquire_lock():
@@ -57,6 +58,8 @@ def main() -> None:
         else:
             if "push" in steps:
                 run_step("push_to_apollo", apollo.push_to_apollo)
+            if "phones" in steps:
+                run_step("phone_reveal", tg_phones.request_phones)  # telefones p/ achar o Telegram
             if "sync" in steps:
                 run_step("sync_status", apollo.sync_status)
     finally:
