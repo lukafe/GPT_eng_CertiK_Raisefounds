@@ -11,7 +11,7 @@ on:
         options:
           - offline        # só lógica pura, não toca nenhuma API
           - live-safe      # + Supabase e canal Telegram (não gasta cota)
-          - live-full      # + Hunter e Apollo (consome 1 busca do Hunter)
+          - live-full      # + Apollo (só leitura, não revela email)
           - dry-run        # main.py --dry-run (popula o banco, não envia email)
           - email-real     # coloca o PRÓPRIO Lucas na sequência: envia email DE VERDADE
           - dump-db        # imprime estado do banco (debug, custo zero)
@@ -36,7 +36,6 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-      HUNTER_API_KEY: ${{ secrets.HUNTER_API_KEY }}
       APOLLO_KEY: ${{ secrets.APOLLO_KEY }}
       APOLLO_SEQ_ID: ${{ secrets.APOLLO_SEQ_ID }}
       APOLLO_MAILBOX_ID: ${{ secrets.APOLLO_MAILBOX_ID }}
@@ -56,9 +55,9 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'live-safe' || inputs.suite == 'live-full')
         run: pytest -m live tests/test_supabase.py tests/test_telegram.py -v
 
-      - name: Live completo — Hunter + Apollo (consome 1 busca do Hunter)
+      - name: Live completo — Apollo
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'live-full'
-        run: pytest -m live tests/test_hunter.py tests/test_apollo.py -v
+        run: pytest -m live tests/test_apollo.py -v
 
       - name: Dry-run ponta a ponta (popula o banco, não envia email)
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'dry-run'

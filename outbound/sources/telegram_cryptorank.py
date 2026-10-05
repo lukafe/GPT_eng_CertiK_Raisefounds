@@ -336,7 +336,7 @@ def fetch_raises() -> dict:
             "raw_post": post_text[:2000],
             "fit_service": fit_service,
             "fit_score": fit_score,
-            # Sem domínio também entra na fila: o Hunter resolve pelo nome
+            # Sem domínio também entra na fila: o Apollo resolve pelo nome
             "status": "queued" if fit_service else "no_fit",
         }
         db.insert_company(row)

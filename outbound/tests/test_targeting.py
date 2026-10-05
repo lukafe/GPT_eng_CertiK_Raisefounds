@@ -1,11 +1,11 @@
-"""Targeting: filtro de VC/fundo, tier por tamanho, escada de cargos com fallback."""
+"""Targeting: filtro de VC/fundo, tier por rodada, escada de cargos e vetos.
 
-from hunter import MAX_CONTACTS_PER_COMPANY, is_never, select_ready, tier_for
+A escolha das pessoas em si (rank_people, com a escada) é testada em test_apollo_enrich.py."""
+
 from sources.telegram_cryptorank import is_vc_or_fund
-
-
-def _c(email, position, confidence=90):
-    return {"value": email, "position": position, "confidence": confidence}
+from targeting import (CTO, ENG_HEADS, FOUNDERS, MAX_CONTACTS_PER_COMPANY, SEC_HEADS, TIER_LADDERS,
+                       is_never, tier_for)
+from timezones import tz_for_country
 
 
 # --- VC / fundo nunca é alvo ---------------------------------------------------
@@ -47,43 +47,37 @@ def test_tier_large():
     assert tier_for("Seed", 200) == "large"       # empresa grande
 
 
-# --- escada com fallback ---------------------------------------------------------
+# --- escada por tier e vetos ------------------------------------------------------
 
-def test_small_ladder_prefers_founder():
-    cands = [_c("cto@x.com", "CTO"), _c("ceo@x.com", "Co-Founder & CEO"),
-             _c("eng@x.com", "Engineer")]
-    assert [c["value"] for c in select_ready(cands, "small")][0] == "ceo@x.com"
-
-
-def test_large_ladder_prefers_security_and_skips_ceo():
-    cands = [_c("ceo@x.com", "CEO"), _c("sec@x.com", "Head of Security"),
-             _c("vpe@x.com", "VP of Engineering"), _c("lead@x.com", "Tech Lead")]
-    chosen = [c["value"] for c in select_ready(cands, "large")]
-    assert chosen[0] == "sec@x.com"
-    assert chosen[1] == "vpe@x.com"
-    assert "ceo@x.com" not in chosen  # CEO não está na escada large
+def test_small_ladder_starts_with_founder():
+    assert TIER_LADDERS["small"][0] == FOUNDERS
+    assert TIER_LADDERS["small"][1] == CTO
 
 
-def test_fallback_descends_ladder():
-    """Sem CTO/heads: escada mid desce até achar alguém — founder, depois lead."""
-    cands = [_c("founder@x.com", "Founder"), _c("lead@x.com", "Engineering Manager")]
-    chosen = [c["value"] for c in select_ready(cands, "mid")]
-    assert chosen == ["founder@x.com", "lead@x.com"]
+def test_mid_ladder_starts_with_cto_then_security_and_engineering():
+    assert TIER_LADDERS["mid"][0] == CTO
+    assert TIER_LADDERS["mid"][1] == SEC_HEADS + ENG_HEADS
 
 
-def test_final_fallback_fills_with_unknown_titles():
-    """Cargo fora da escada (ou vazio) ainda preenche vaga como último recurso."""
-    cands = [_c("cto@x.com", "CTO"), _c("who@x.com", None),
-             _c("ops@x.com", "Operations Wizard", confidence=95)]
-    chosen = [c["value"] for c in select_ready(cands, "small")]
-    assert chosen[0] == "cto@x.com"
-    assert set(chosen[1:]) == {"who@x.com", "ops@x.com"}
+def test_large_ladder_prefers_security_and_skips_founders():
+    assert TIER_LADDERS["large"][0] == SEC_HEADS
+    assert FOUNDERS not in TIER_LADDERS["large"]  # CEO/founder de empresa grande não responde cold
 
 
-def test_cap_respected_and_never_excluded():
-    cands = [_c(f"f{i}@x.com", "Founder") for i in range(5)] + \
-            [_c("mkt@x.com", "Marketing Manager", confidence=99)]
-    chosen = select_ready(cands, "small")
-    assert len(chosen) == MAX_CONTACTS_PER_COMPANY == 3
-    assert all(c["value"] != "mkt@x.com" for c in chosen)
-    assert is_never("Head of Sales")
+def test_cap_and_never_list():
+    assert MAX_CONTACTS_PER_COMPANY == 3
+    for title in ("Head of Sales", "Marketing Manager", "Business Development Lead",
+                  "Community Manager", "Talent Partner"):
+        assert is_never(title), title
+    assert not is_never("Co-Founder & CTO")
+    assert not is_never(None)
+
+
+# --- fuso por país ------------------------------------------------------------------
+
+def test_tz_mapping():
+    assert tz_for_country("US") == "America/New_York"
+    assert tz_for_country("br") == "America/Sao_Paulo"
+    assert tz_for_country("SG") == "Asia/Singapore"
+    assert tz_for_country("XX") == "Etc/UTC"
+    assert tz_for_country(None) == "Etc/UTC"

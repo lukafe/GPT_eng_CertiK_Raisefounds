@@ -57,7 +57,7 @@ def test_negative_outweighs_weak_signal():
     assert s is None
 
 
-# --- portão 2: indústria do Hunter ------------------------------------------------
+# --- portão 2: indústria da empresa (Apollo) ---------------------------------------
 
 
 def test_industry_gate_blocks_wrong_companies():

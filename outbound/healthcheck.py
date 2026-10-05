@@ -1,6 +1,6 @@
 """Roda antes do main.py no cron: falha (exit != 0) se qualquer API estiver fora.
 
-Hunter só é checado com ENRICH_PROVIDER=hunter (o padrão agora é o Apollo).
+APIs: canal do CryptoRank no Telegram, Supabase e Apollo (o enriquecimento é 100% Apollo).
 """
 
 import sys
@@ -34,18 +34,6 @@ def check_supabase() -> bool:
         return False
 
 
-def check_hunter() -> bool:
-    try:
-        from hunter import searches_available
-
-        available = searches_available()
-        log("healthcheck", f"Hunter ok ({available} buscas restantes)")
-        return True
-    except Exception as e:  # noqa: BLE001
-        log("healthcheck", f"Hunter inacessível: {e}")
-        return False
-
-
 def check_apollo() -> bool:
     try:
         from apollo import usage_stats
@@ -59,16 +47,11 @@ def check_apollo() -> bool:
 
 
 def main() -> None:
-    from common import env
-
     checks = [
         ("telegram", check_telegram),
         ("supabase", check_supabase),
         ("apollo", check_apollo),
     ]
-    # Desde out/2026 o enriquecimento é pelo Apollo; o Hunter só é checado se voltar a ser usado
-    if (env("ENRICH_PROVIDER", required=False, default="apollo") or "").lower() == "hunter":
-        checks.append(("hunter", check_hunter))
     failed = [name for name, fn in checks if not fn()]
     if failed:
         log("healthcheck", f"FALHA: {', '.join(failed)} — main.py não roda hoje")

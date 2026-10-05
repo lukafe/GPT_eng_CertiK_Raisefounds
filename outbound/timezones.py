@@ -1,4 +1,4 @@
-"""Mapa país (ISO-2, como o Hunter devolve) → fuso principal.
+"""Mapa país (ISO-2) → fuso principal.
 
 Regra do spec: EUA = America/New_York; país desconhecido/ausente = Etc/UTC.
 """

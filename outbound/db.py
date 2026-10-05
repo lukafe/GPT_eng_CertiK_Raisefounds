@@ -118,7 +118,7 @@ def companies_by_status(status: str, require_domain: bool = False, limit: int | 
 
 
 def companies_for_apollo_retry(limit: int, since: str):
-    """Empresas que o Hunter deixou sem contato e o Apollo ainda não tentou
+    """Empresas que ficaram sem contato no enriquecimento antigo e o Apollo ainda não tentou
     (raise a partir de `since`), mais recentes primeiro."""
     if limit <= 0:
         return []

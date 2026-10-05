@@ -5,16 +5,17 @@ Telegram (@cryptorank_fundraising), acha os decisores com email **verificado** n
 coloca cada contato na sequência do Apollo (que envia da caixa do Lucas no fuso do projeto)
 e registra tudo no Supabase.
 
-## Enriquecimento pelo Apollo (desde out/2026, `apollo_enrich.py`)
+## Enriquecimento: 100% Apollo (desde out/2026, `apollo_enrich.py`)
+O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
+
 - Domínio: o do CryptoRank; sem ele, busca por nome no Apollo e só aceita nome idêntico
   (domínio cripto como desempate; `.com` só com nome distintivo). Na dúvida → `no_domain`.
 - Pessoas: busca no domínio só com email verificado, escada de cargos por tier
-  (a mesma do Hunter), sem marketing/BD/RH. Revelação via `bulk_match` (1 crédito/pessoa).
+  (`targeting.py`), sem marketing/BD/RH. Revelação via `bulk_match` (1 crédito/pessoa).
 - Só vira `ready` email com `email_status = verified` e fora de provedor gratuito.
 - Limites: `COMPANIES_PER_DAY` empresas/dia, `APOLLO_REVEALS_PER_RUN` créditos/rodada
   (padrão 30), `source_state.max_contacts_per_company` pessoas/empresa (padrão 3).
-- Também retenta, uma vez, empresas que o Hunter deixou `no_contacts` (raise ≤ 60 dias).
-- Voltar ao Hunter: `ENRICH_PROVIDER=hunter` no workflow.
+- Também retenta, uma vez, empresas que ficaram `no_contacts` no enriquecimento antigo (raise ≤ 60 dias).
 
 ## Controles no Supabase (`source_state`)
 | chave | efeito |
@@ -51,7 +52,7 @@ Sem API key, sem bot: o scraper lê o preview web público `https://t.me/s/crypt
 cd outbound
 pip install -r requirements.txt
 cp .env.example .env    # e preencher (ver abaixo)
-python main.py --dry-run   # tudo menos o push ao Apollo
+python main.py --dry-run   # só lê o CryptoRank: pula enriquecimento (gasta créditos), push e sync
 python main.py             # rodada completa
 ```
 
@@ -61,7 +62,6 @@ python main.py             # rodada completa
 |---|---|
 | `SUPABASE_URL` | Dashboard do Supabase → Settings → API |
 | `SUPABASE_SERVICE_KEY` | idem — usar a **secret** (`sb_secret_...`), não a publishable |
-| `HUNTER_API_KEY` | hunter.io → API |
 | `APOLLO_KEY` | Apollo → Settings → Integrations → API (master key) |
 | `APOLLO_SEQ_ID` | URL da sequência: `app.apollo.io/#/sequences/<SEQ_ID>` |
 | `APOLLO_MAILBOX_ID` | `python apollo.py --list-mailboxes` |
@@ -79,7 +79,6 @@ pytest                 # tudo
 ```
 
 Atenção:
-- `test_hunter_domain_search` consome **1 busca** da cota do Hunter por execução.
 - `test_apollo_dry_run` **envia um email real** para `APOLLO_TEST_EMAIL` às 9h.
   Só roda com `APOLLO_DRY_RUN_OK=1 APOLLO_TEST_EMAIL=seu@email pytest -m live tests/test_apollo.py`.
 - Cada teste grava uma linha em `runs` (best-effort).
@@ -87,16 +86,19 @@ Atenção:
 ## Rodando pelo GitHub Actions (recomendado)
 
 Credenciais: repo → Settings → Secrets and variables → Actions → New repository secret,
-uma por uma: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `HUNTER_API_KEY`, `APOLLO_KEY`,
+uma por uma: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `APOLLO_KEY`,
 `APOLLO_SEQ_ID` (e `APOLLO_MAILBOX_ID` opcional — o código descobre sozinho).
 
 - **Testes**: aba Actions → *Tests* → Run workflow → escolher a suíte
   (`offline` → `live-safe` → `live-full` → `dry-run`, nessa ordem na primeira vez).
 - **Produção**: o workflow *Daily outbound* roda sozinho todo dia às 06:00 UTC
   (healthcheck + pipeline). Também aceita disparo manual, com opção de dry-run.
+- *Sync Apollo (1h)* sincroniza respostas e bounces e atualiza o estado do Apollo no monitor;
+  *Scrape raises (2h)* lê o CryptoRank.
 - O `log.txt` de cada rodada aparece no último step do job.
 
-Nota: agendamentos (`schedule`) só disparam a partir do branch default (`main`).
+Nota: agendamentos (`schedule`) rodam o código do **branch padrão** do repositório, que precisa
+ser `main` (Settings → General → Default branch).
 
 ## Cron local (alternativa, diário 06:00 UTC)
 
@@ -104,23 +106,15 @@ Nota: agendamentos (`schedule`) só disparam a partir do branch default (`main`)
 0 6 * * * cd /caminho/para/outbound && python healthcheck.py && python main.py >> log.txt 2>&1
 ```
 
-O healthcheck pinga o canal do Telegram, Supabase, Hunter e Apollo; se qualquer um falhar,
+O healthcheck pinga o canal do Telegram, Supabase e Apollo; se qualquer um falhar,
 o `main.py` não roda naquele dia (o `&&` corta) e o motivo fica em `log.txt`.
 O horário do email é responsabilidade do Apollo (sending window 09:00–09:30 no
 fuso do contato) — o cron só abastece a fila.
 
-## Quando a cota do Hunter estourar
+## Quando os créditos do Apollo ficarem curtos
 
-O script checa a cota (`GET /v2/account`) antes de cada rodada. Se restarem menos
-buscas que `COMPANIES_PER_DAY`, a etapa de enriquecimento é pulada com log claro
-(`cota Hunter insuficiente`) e registrada em `runs` — nada quebra, e as empresas
-ficam com `status='new'` esperando o próximo dia.
-
-Opções:
-1. **Upgrade** para o plano Starter (US$ 49/mês, 500 buscas) — sustenta 3–4 empresas/dia.
-2. **Reduzir o ritmo**: `COMPANIES_PER_DAY=1` no `.env` cabe no plano grátis (~25 buscas/mês).
-3. Esperar o reset mensal da cota — o backlog é processado nas rodadas seguintes,
-   sempre das empresas mais recentes para as mais antigas.
+Cada pessoa revelada gasta 1 crédito de lead; `APOLLO_REVEALS_PER_RUN` (padrão 30) limita
+o gasto por rodada. O monitor mostra os créditos restantes e acende alerta abaixo de 100.
 
 ## Estados
 
