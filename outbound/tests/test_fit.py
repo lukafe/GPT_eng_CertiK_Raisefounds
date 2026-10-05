@@ -1,6 +1,6 @@
 """Classificador de fit de serviço: só aborda quem pode comprar algo da CertiK."""
 
-from fit import classify_fit, industry_fit
+from fit import classify_crypto_source, classify_fit, industry_fit
 
 # --- portão 1: texto do post ----------------------------------------------------
 
@@ -73,3 +73,23 @@ def test_industry_gate_allows_tech():
     assert industry_fit("Financial Services") is True
     assert industry_fit("Blockchain Services") is True
     assert industry_fit(None) is True  # desconhecida: portão 1 já filtrou
+
+
+# --- fonte 100% cripto (out/2026): entra tudo, exceto setor claramente fora -------------
+
+def test_crypto_source_keeps_projects_without_service_keywords():
+    # cortados antes por falta de palavra-chave, mas são projetos cripto do canal
+    for text in ("Grass, the flagship product of Wynd Network, revolutionizes internet connectivity",
+                 "functionSPACE builds tools for markets based on measurable outcomes",
+                 "Marketplace for card packs, P2P trading, vaulting and physical delivery"):
+        service, _ = classify_crypto_source(text)
+        assert service == "smart_contract_audit", text
+
+
+def test_crypto_source_keeps_detected_service():
+    service, _ = classify_crypto_source("Self-custody wallet with on-ramp and custody for institutions")
+    assert service == "pentest_infra"
+
+
+def test_crypto_source_still_drops_clearly_off_sector():
+    assert classify_crypto_source("Acme runs a chain of dental clinics and a pharma brand")[0] is None

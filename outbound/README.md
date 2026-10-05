@@ -10,12 +10,20 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
 
 - Domínio: o do CryptoRank; sem ele, busca por nome no Apollo e só aceita nome idêntico
   (domínio cripto como desempate; `.com` só com nome distintivo). Na dúvida → `no_domain`.
-- Pessoas: busca no domínio só com email verificado, escada de cargos por tier
-  (`targeting.py`), sem marketing/BD/RH. Revelação via `bulk_match` (1 crédito/pessoa).
+- Pessoas (out/2026: falar com o máximo do time): até 10 por empresa, só com email
+  verificado. Primeiro a escada de decisores do tier (`targeting.py`); depois o resto do
+  time, técnica e produto antes de operações, BD e marketing. Nunca entram RH/recrutamento,
+  estagiário, assistente, suporte, embaixador/moderador, advisor, investidor, conselho,
+  consultor. Revelação via `bulk_match` (1 crédito/pessoa).
+- Inscrição: no máximo 3 pessoas da mesma empresa por dia (decisores primeiro); o resto
+  entra nos dias seguintes, dentro do teto diário.
+- Fit: o canal do CryptoRank é 100% cripto, então entra tudo, exceto VC/fundo e setor
+  claramente fora (saúde, varejo, moda...). Resumos do canal ("Q3 Highlights") são ignorados.
 - Só vira `ready` email com `email_status = verified` e fora de provedor gratuito.
 - Limites: `COMPANIES_PER_DAY` empresas/dia, `APOLLO_REVEALS_PER_RUN` créditos/rodada
-  (padrão 30), `source_state.max_contacts_per_company` pessoas/empresa (padrão 3).
-- Também retenta, uma vez, empresas que ficaram `no_contacts` no enriquecimento antigo (raise ≤ 60 dias).
+  (padrão 60), `source_state.max_contacts_per_company` pessoas/empresa (padrão 10).
+- Também retenta, uma vez, empresas que ficaram `no_contacts` no enriquecimento antigo (raise ≤ 60 dias);
+  como o domínio delas pode ter vindo de busca por nome, passam pelo portão de indústria.
 
 ## Controles no Supabase (`source_state`)
 | chave | efeito |

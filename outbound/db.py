@@ -99,6 +99,23 @@ def count_pushed_today() -> int:
     return resp.count or 0
 
 
+def pushed_today_by_company() -> dict[int, int]:
+    """Quantos contatos de cada empresa já entraram em sequência hoje (UTC)."""
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    rows = (
+        client().table("outreach").select("contacts(company_id)")
+        .gte("added_at", today).execute().data
+    )
+    counts: dict[int, int] = {}
+    for r in rows:
+        cid = (r.get("contacts") or {}).get("company_id")
+        if cid is not None:
+            counts[cid] = counts.get(cid, 0) + 1
+    return counts
+
+
 def companies_by_status(status: str, require_domain: bool = False, limit: int | None = None):
     """Prioridade da fila: maior round primeiro (mais poder de compra),
     empate por mais recente. Nulls de amount vão pro fim."""

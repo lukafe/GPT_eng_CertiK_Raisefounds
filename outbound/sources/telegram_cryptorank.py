@@ -30,6 +30,12 @@ MAX_PAGES = 5  # limite de segurança por execução
 
 # Posts que começam com esses marcadores nunca são um raise individual
 START_MARKERS = ("insight", "top ", "top-", "digest", "weekly", "recap", "report")
+# Resumos agregados do canal ("Q3 2026 Crypto Fundraising Highlights ... raised $3.7B across
+# 158 funding rounds", "Crypto payments funding grew nearly 6x") não são uma empresa
+DIGEST_RE = re.compile(
+    r"\bq[1-4]\s+20\d\d\b|\bhighlights\b|\bacross\s+\d+\s+(?:funding\s+)?(?:rounds|deals)\b"
+    r"|\bfunding\s+(?:grew|fell|rose|dropped|doubled|surged)\b|\bprojects\s+raised\b",
+    re.IGNORECASE)
 
 # Valor da rodada: $35M / $500K / $1.5B — mas NÃO o "$2B" de "at $2B Valuation"
 AMOUNT_RE = re.compile(r"\$(?P<amount>[\d.,]+)\s*(?P<unit>[KMB])\b(?!\s*Valuation)",
@@ -132,6 +138,9 @@ def is_raise_post(post: dict) -> bool:
         return False
     start = re.sub(r"^[\W_]+", "", text.lower(), flags=re.UNICODE)
     if any(start.startswith(m) for m in START_MARKERS):
+        return False
+    # Só o trecho antes do "About:" (a descrição de um raise de verdade pode citar "Q4 2026")
+    if DIGEST_RE.search(text.split("About:", 1)[0][:240]):
         return False
     head = _head(text)
     return bool(ROUND_RE.search(head) or AMOUNT_ROUND_RE.search(head)
@@ -297,7 +306,7 @@ def fetch_raises() -> dict:
     posts = fetch_new_raises(since)
     raises = [r for r in (parse_raise(p) for p in posts if is_raise_post(p)) if r]
 
-    from fit import classify_fit
+    from fit import classify_crypto_source
 
     created = with_domain = vcs_skipped = no_fit = 0
     posts_by_msg = {p["message_id"]: p for p in posts}
@@ -312,8 +321,9 @@ def fetch_raises() -> dict:
                 db.company_exists_by_name(normalized):
             continue
 
-        # PORTÃO 1 de fit: nenhum serviço da CertiK se aplica → nunca abordar
-        fit_service, fit_score = classify_fit(post_text)
+        # PORTÃO 1 de fit: o canal é 100% cripto, então entra tudo, exceto setor claramente
+        # fora (saúde, varejo, moda...). VC/fundo já foi barrado acima.
+        fit_service, fit_score = classify_crypto_source(post_text)
         if fit_service is None:
             no_fit += 1
             log("fetch_raises", f"sem fit de serviço (score={fit_score}): "

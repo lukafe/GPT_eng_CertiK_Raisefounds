@@ -137,3 +137,17 @@ def test_parse_real_raise():
     )
     assert raises, f"nenhum post de raise reconhecido. Últimos posts do canal:\n{samples}"
     assert all(r["project_name"] for r in raises)
+
+
+def test_channel_digests_are_not_companies():
+    # resumos do canal que viraram "empresa" em set/2026
+    for text in ("\u200b\u200b ⚡️ Q3 2026 Crypto Fundraising Highlights Crypto projects raised $3.7B "
+                 "across 158 funding rounds in Q3.",
+                 "\u200b\u200b 📊 Crypto payments funding grew nearly 6x since 2024 Payments is one of "
+                 "the fastest-growing categories"):
+        assert not is_raise_post({"text": text}), text
+
+
+def test_raise_whose_description_mentions_a_quarter_still_counts():
+    text = "\u200b\u200b Acme $5M Seed Round ⚡️ 📑 About: Acme launches mainnet in Q4 2026."
+    assert is_raise_post({"text": text})

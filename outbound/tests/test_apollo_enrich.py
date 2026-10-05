@@ -81,28 +81,31 @@ def _p(pid, title):
     return {"id": pid, "first_name": pid, "title": title}
 
 
-def test_rank_people_small_tier_founder_first_and_bd_out():
+def test_rank_people_decision_makers_first_then_rest_of_team():
     people = [_p("bd", "Head of Business Development"), _p("eng", "Engineer"),
-              _p("cto", "CTO"), _p("ceo", "Founder, CEO"), _p("mkt", "CMO / Marketing")]
+              _p("cto", "CTO"), _p("ceo", "Founder, CEO"), _p("mkt", "CMO / Marketing"),
+              _p("pm", "Product Manager")]
     ranked = [p["id"] for p in ae.rank_people(people, "small")]
-    assert ranked[:2] == ["ceo", "cto"]
-    assert "bd" not in ranked and "mkt" not in ranked
+    assert ranked[:3] == ["ceo", "cto", "eng"]          # escada de decisores
+    assert ranked[3:] == ["pm", "bd", "mkt"]            # resto do time: produto, BD, marketing
 
 
-def test_rank_people_word_boundaries_and_no_filler():
+def test_rank_people_not_team_never_enters():
     people = [_p("dir", "Director of Finance"), _p("contr", "Contractor"),
               _p("cof", "Cofounder"), _p("int", "Intern"), _p("adv", "Advisor"),
-              _p("ops", "Operations")]
+              _p("ops", "Operations"), _p("hr", "HR Manager"), _p("rec", "Technical Recruiter"),
+              _p("inv", "Investor"), _p("amb", "Community Ambassador"), _p("as", "Executive Assistant")]
     ranked = [p["id"] for p in ae.rank_people(people, "mid")]
-    assert ranked == ["cof"]  # sem "completar com qualquer um"
+    assert ranked == ["cof", "dir", "ops"]
 
 
 def test_short_acronyms_need_whole_word():
     people = [_p("pc", "Project Coordinator"), _p("bdev", "Senior Business Developer"),
               _p("coo", "COO"), _p("dev", "Senior Developer")]
     ranked = [p["id"] for p in ae.rank_people(people, "small")]
-    assert "pc" not in ranked and "bdev" not in ranked
-    assert ranked == ["coo", "dev"]
+    # 'coo' não casa com 'Coordinator': o coordenador não entra como decisor, só no fim
+    assert ranked[:2] == ["coo", "dev"]
+    assert ranked.index("pc") == len(ranked) - 1
 
 
 def test_role_level_labels():
@@ -215,6 +218,7 @@ def test_cryptorank_domain_skips_industry_gate(monkeypatch, fake_db):
 
 
 def test_partial_previous_run_does_not_exceed_limit(monkeypatch, fake_db):
+    monkeypatch.setattr(db, "get_state", lambda key: "3" if key == "max_contacts_per_company" else None)
     monkeypatch.setattr(db, "contacts_by_company", lambda cid: [
         {"status": "held"}, {"status": "ready"}, {"status": "skipped"}])
     monkeypatch.setattr(ae, "search_people", lambda *a, **k: [_p(str(i), "Founder") for i in range(5)])
@@ -325,3 +329,52 @@ def test_push_stops_on_bounce_guard(monkeypatch):
     monkeypatch.setattr(db, "ready_contacts", lambda: pytest.fail("não devia ler a fila"))
     result = apollo.push_to_apollo()
     assert result["paused"] is True and result["reason"] == "bounce"
+
+
+# --- até 10 por empresa (out/2026) ---------------------------------------------------
+
+def test_default_is_ten_per_company(fake_db):
+    assert ae.max_per_company() == 10
+
+
+def test_enrich_company_fills_with_rest_of_team(monkeypatch, fake_db):
+    calls = []
+
+    def fake_search(domain, seniorities, per_page=25):
+        calls.append(seniorities)
+        if seniorities:  # só um decisor com email verificado
+            return [_p("ceo", "CEO")]
+        return [_p("ceo", "CEO"), _p("eng", "Smart Contract Engineer"), _p("pm", "Product Lead"),
+                _p("mkt", "Marketing Manager"), _p("hr", "HR Generalist"), _p("int", "Intern")]
+
+    monkeypatch.setattr(ae, "search_people", fake_search)
+    monkeypatch.setattr(ae, "reveal", lambda ids: [
+        {"id": i, "email": f"{i}@q.xyz", "email_status": "verified"} for i in ids])
+    ready = ae.enrich_company({"id": 7, "name": "Q", "domain": "q.xyz", "stage_tier": "early"},
+                              {"reveals": 60})
+    assert calls == [ae.DECISION_SENIORITIES, None]   # segunda busca com todas as senioridades
+    assert ready == 4
+    assert [c["email"] for c in fake_db["contacts"]] == [
+        "ceo@q.xyz", "eng@q.xyz", "pm@q.xyz", "mkt@q.xyz"]
+
+
+def test_enrich_company_skips_second_search_when_enough_decision_makers(monkeypatch, fake_db):
+    monkeypatch.setattr(db, "get_state", lambda key: "2" if key == "max_contacts_per_company" else None)
+    calls = []
+    monkeypatch.setattr(ae, "search_people", lambda d, sen, per_page=25: calls.append(sen) or [
+        _p(str(i), "Founder") for i in range(4)])
+    monkeypatch.setattr(ae, "reveal", lambda ids: [
+        {"id": i, "email": f"{i}@w.xyz", "email_status": "verified"} for i in ids])
+    assert ae.enrich_company({"id": 8, "name": "W", "domain": "w.xyz"}, {"reveals": 60}) == 2
+    assert calls == [ae.DECISION_SENIORITIES]
+
+
+def test_retry_of_old_company_goes_through_industry_gate(monkeypatch, fake_db):
+    # domínio gravado pelo enriquecimento antigo (busca por nome) não é confiável
+    monkeypatch.setattr(ae, "search_people", lambda *a, **k: [_p("ceo", "CEO")])
+    monkeypatch.setattr(ae, "reveal", lambda ids: [
+        {"id": "ceo", "email": "ceo@pons.com", "email_status": "verified",
+         "organization": {"industry": "publishing"}}])
+    ready = ae.enrich_company({"id": 10, "name": "Pons", "domain": "pons.com",
+                               "status": "no_contacts"}, {"reveals": 60})
+    assert ready == 0 and fake_db["company_updates"][-1]["status"] == "no_fit"

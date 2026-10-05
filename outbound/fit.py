@@ -5,7 +5,11 @@ Regra de negócio: se a empresa não tem nada a ver com NENHUM serviço da Certi
 status 'no_fit' e NUNCA recebe email.
 
 Dois portões:
- 1. classify_fit(texto do post) — no scraper, custo zero.
+ 1. Texto do post, no scraper, custo zero. Para fontes 100% cripto (canal de raises do
+    CryptoRank, calendários de ICO) vale classify_crypto_source (out/2026, decisão do
+    Lucas): entra tudo, exceto setor claramente fora (saúde, varejo, moda...). O VC/fundo
+    é barrado antes, no próprio scraper. classify_fit (só palavras-chave) fica para fontes
+    genéricas.
  2. industry_fit(indústria da empresa no Apollo) — no enriquecimento, barra domínios
     resolvidos pelo nome que caíram na empresa errada (caso Polaris Inc.).
 """
@@ -97,6 +101,26 @@ def classify_fit(text: str | None) -> tuple[str | None, int]:
     if final < FIT_THRESHOLD or best_score == 0:
         return None, final
     return best_service, final
+
+
+# Serviço padrão para projeto cripto sem palavra-chave de serviço no texto
+DEFAULT_CRYPTO_SERVICE = "smart_contract_audit"
+
+
+def classify_crypto_source(text: str | None) -> tuple[str | None, int]:
+    """Fonte 100% cripto: entra tudo, exceto setor claramente fora do universo CertiK.
+
+    Com palavra-chave de serviço, devolve o serviço de melhor fit; sem nenhuma, devolve o
+    serviço padrão (auditoria), porque o projeto é cripto por definição da fonte. Só fica
+    de fora (None) quando há palavra de setor fora (penalidade) e ela pesa mais que os
+    sinais cripto."""
+    service, score = classify_fit(text)
+    if service:
+        return service, score
+    t = (text or "").lower()
+    if any(_hits(t, kw) for kw, _ in NEGATIVE_KEYWORDS):
+        return None, score
+    return DEFAULT_CRYPTO_SERVICE, score
 
 
 def industry_fit(industry: str | None) -> bool:
