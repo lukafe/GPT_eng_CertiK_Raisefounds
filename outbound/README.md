@@ -34,6 +34,13 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
   fala em "raise recente".
 - A leitura normal (de 2 em 2 horas) também passa a pular empresa com domínio já conhecido.
 
+## Raises antigos: sequência própria (desde 05/10)
+
+- Contato de empresa com raise de mais de 30 dias entra na sequência de `source_state.apollo_seq_id_older`
+  ("Raises 1–4 meses", copy sem "recent raise"); os demais seguem na `apollo_seq_id` (v2).
+- A fila de enriquecimento põe os raises dos últimos 30 dias na frente; os antigos vêm depois.
+- Sem `apollo_seq_id_older`, todo mundo vai para a v2.
+
 ## Fonte de ICO: ICO Drops (desde out/2026, `sources/icodrops.py`)
 - Lê as listas de vendas futuras e ativas (TGE, IDO, IEO, presale, airdrop/points) e, para
   cada projeto novo, a página do projeto (site oficial e descrição). Dedupe por URL, nome e

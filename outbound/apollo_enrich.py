@@ -420,13 +420,34 @@ def companies_per_day() -> int:
     return int(env("COMPANIES_PER_DAY", required=False, default="10"))
 
 
+RECENT_RAISE_DAYS = 30   # raises mais novos que isso furam a fila dos antigos
+
+
+def queue_order(companies: list[dict], today=None) -> list[dict]:
+    """Fila de enriquecimento: raises dos últimos 30 dias primeiro; dentro de cada grupo,
+    maior rodada primeiro e, no empate, a mais recente. Sem data conta como antigo."""
+    from datetime import date
+
+    today = today or datetime.now(timezone.utc).date()
+
+    def key(c):
+        try:
+            raised = date.fromisoformat(str(c.get("raise_date"))[:10])
+        except ValueError:
+            raised = None
+        older = raised is None or (today - raised).days > RECENT_RAISE_DAYS
+        return (older, -(c.get("amount_usd") or -1), -(raised.toordinal() if raised else 0))
+
+    return sorted(companies, key=key)
+
+
 def enrich_contacts() -> dict:
     """Etapa 2: empresas na fila (e as que ficaram sem contato) → Apollo → contatos."""
     per_day = companies_per_day()
     per_run = int(env("APOLLO_REVEALS_PER_RUN", required=False, default=str(DEFAULT_REVEALS_PER_RUN)))
     budget = {"reveals": per_run}
 
-    companies = db.companies_by_status("queued", limit=per_day)
+    companies = queue_order(db.companies_by_status("queued"))[:per_day]
     companies += retry_candidates(per_day - len(companies))
 
     total_ready, processed = 0, 0
