@@ -417,7 +417,7 @@ def retry_candidates(limit: int) -> list[dict]:
 
 def enrich_contacts() -> dict:
     """Etapa 2: empresas na fila (e as que ficaram sem contato) → Apollo → contatos."""
-    per_day = int(env("COMPANIES_PER_DAY", required=False, default="4"))
+    per_day = int(env("COMPANIES_PER_DAY", required=False, default="10"))
     per_run = int(env("APOLLO_REVEALS_PER_RUN", required=False, default=str(DEFAULT_REVEALS_PER_RUN)))
     budget = {"reveals": per_run}
 

@@ -80,7 +80,7 @@ python main.py             # rodada completa
 | `APOLLO_SEQ_ID` | URL da sequência: `app.apollo.io/#/sequences/<SEQ_ID>` |
 | `APOLLO_MAILBOX_ID` | `python apollo.py --list-mailboxes` |
 | `MAX_PER_DAY` | teto global de contatos/dia (default 40) |
-| `COMPANIES_PER_DAY` | empresas enriquecidas/dia (default 4) |
+| `COMPANIES_PER_DAY` | empresas enriquecidas/dia (default 10) |
 
 Setup único do banco: colar `schema.sql` no SQL Editor do Supabase e rodar.
 
