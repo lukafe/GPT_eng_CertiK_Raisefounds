@@ -65,6 +65,30 @@ def current_seq_id() -> str:
     return (db.get_state("apollo_seq_id") or "").strip() or env("APOLLO_SEQ_ID")
 
 
+OLDER_RAISE_DAYS = 30   # raise com mais de 30 dias vai para a sequência de raises antigos
+
+
+def older_seq_id() -> str | None:
+    """Sequência para raises de mais de OLDER_RAISE_DAYS dias (copy sem "recent raise").
+    Vazia = todo mundo vai para a sequência atual."""
+    return (db.get_state("apollo_seq_id_older") or "").strip() or None
+
+
+def seq_for(company: dict, default_seq: str, older_seq: str | None, today=None) -> str:
+    """Escolhe a sequência pela idade do raise da empresa."""
+    from datetime import date
+
+    raw = (company or {}).get("raise_date")
+    if not older_seq or not raw:
+        return default_seq
+    try:
+        raised = date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return default_seq
+    today = today or datetime.now(timezone.utc).date()
+    return older_seq if (today - raised).days > OLDER_RAISE_DAYS else default_seq
+
+
 # --- trava de bounce e rampa de volume -------------------------------------------
 
 BOUNCE_PAUSE_PCT = 0.03       # acima disso, pausa inscrições novas sozinho
@@ -264,6 +288,7 @@ def push_to_apollo() -> dict:
 
     max_per_day = daily_cap()
     seq_id = current_seq_id()
+    older_seq = older_seq_id()
     mailbox_id = resolve_mailbox_id()
 
     # Teto diário real: desconta o que já entrou em sequência hoje (rodada dupla)
@@ -289,9 +314,10 @@ def push_to_apollo() -> dict:
             if not apollo_id:
                 apollo_id = create_contact(c, company)
                 db.update_contact(c["id"], apollo_id=apollo_id)
-            add_to_sequence(apollo_id, seq_id, mailbox_id)
+            seq = seq_for(company, seq_id, older_seq)
+            add_to_sequence(apollo_id, seq, mailbox_id)
             db.update_contact(c["id"], status="in_sequence")
-            db.insert_outreach(c["id"], seq_id)
+            db.insert_outreach(c["id"], seq)
             pushed += 1
             pushed_contacts.append({**c, "_company_name": company.get("name")})
             time.sleep(1)  # educação com a API (80 chamadas em rajada = risco de 429)
@@ -314,7 +340,8 @@ def push_to_apollo() -> dict:
 
 def sync_status() -> dict:
     """Etapa 4: Apollo → contacts/outreach (replied / bounced / finished)."""
-    seq_ids = {str(s) for s in db.outreach_sequence_ids()} | {str(current_seq_id())}
+    seq_ids = ({str(s) for s in db.outreach_sequence_ids()} | {str(current_seq_id())}
+               | ({older_seq_id()} if older_seq_id() else set()))
     in_seq = db.contacts_by_status("in_sequence")
     if not in_seq:
         db.log_run("sync_status", True, "nenhum contato in_sequence")

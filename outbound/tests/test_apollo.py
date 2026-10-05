@@ -172,3 +172,18 @@ def test_select_for_today_respects_daily_budget():
 
     contacts = [_c(i, i, "2026-10-04") for i in range(1, 10)]
     assert len(select_for_today(contacts, {}, budget=4)) == 4
+
+
+# --- sequência por idade do raise ---------------------------------------------------
+
+def test_seq_for_routes_older_raises_to_their_own_sequence():
+    from datetime import date
+
+    import apollo
+    today = date(2026, 10, 5)
+    assert apollo.seq_for({"raise_date": "2026-09-20"}, "v2", "old", today) == "v2"
+    assert apollo.seq_for({"raise_date": "2026-09-05"}, "v2", "old", today) == "v2"     # 30 dias
+    assert apollo.seq_for({"raise_date": "2026-09-04"}, "v2", "old", today) == "old"
+    assert apollo.seq_for({"raise_date": "2026-06-08"}, "v2", None, today) == "v2"      # sem sequência própria
+    assert apollo.seq_for({"raise_date": None}, "v2", "old", today) == "v2"
+    assert apollo.seq_for({}, "v2", "old", today) == "v2"

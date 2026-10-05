@@ -390,3 +390,20 @@ def test_rank_people_people_ops_support_and_untitled_never_enter():
 def test_rank_people_founder_with_extra_titles_stays_decision_maker():
     people = [_p("cto", "CTO"), _p("fa", "Founder & CEO, Angel Investor"), _p("bm", "CEO & Board Member")]
     assert [p["id"] for p in ae.rank_people(people, "small")] == ["fa", "bm", "cto"]
+
+
+def test_queue_order_puts_recent_raises_first():
+    from datetime import date
+
+    import apollo_enrich as ae
+    today = date(2026, 10, 5)
+    rows = [
+        {"name": "old_big", "raise_date": "2026-06-11", "amount_usd": 335_000_000},
+        {"name": "recent_small", "raise_date": "2026-09-30", "amount_usd": 2_000_000},
+        {"name": "ico_today", "raise_date": "2026-10-05", "amount_usd": None},
+        {"name": "recent_big", "raise_date": "2026-09-25", "amount_usd": 40_000_000},
+        {"name": "old_small", "raise_date": "2026-07-01", "amount_usd": 1_000_000},
+        {"name": "no_date", "raise_date": None, "amount_usd": 9_000_000},
+    ]
+    assert [r["name"] for r in ae.queue_order(rows, today)] == [
+        "recent_big", "recent_small", "ico_today", "old_big", "no_date", "old_small"]
