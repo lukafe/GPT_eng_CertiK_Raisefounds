@@ -2,9 +2,10 @@ name: Scrape raises (2h)
 
 # 24/7: lê o canal do CryptoRank a cada 2h e enfileira empresas novas.
 # Não gasta cota de Hunter/Apollo — só leitura do Telegram + gravação no Supabase.
+# Minuto 41 de propósito: na virada da hora o agendador do GitHub atrasa e pula rodadas.
 on:
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "41 */2 * * *"
   workflow_dispatch:
 
 concurrency:
