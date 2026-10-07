@@ -194,3 +194,10 @@ def test_main_records_failure(monkeypatch):
     assert runs == [("monitor_apollo", False, "401 Unauthorized")]
     assert updates[0][0] == "integrations" and updates[0][1]["status"] == "erro"
     assert updates[1][0] == "channel_accounts" and updates[1][1]["live_status"] == "atencao"
+
+
+def test_sequence_summary_tolera_loading():
+    from monitor_refresh import sequence_summary
+    s = sequence_summary({"id": "x", "name": "n", "bounce_rate": "loading",
+                          "unique_delivered": "loading", "unique_bounced": None})
+    assert s["bounce_rate"] == 0 and s["delivered"] == 0 and s["bounced"] == 0
