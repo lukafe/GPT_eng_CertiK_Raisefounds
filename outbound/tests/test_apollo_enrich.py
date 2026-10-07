@@ -269,9 +269,9 @@ def _state(values):
     return lambda key: values.get(key)
 
 
-def test_bounce_guard_pauses_above_3pct(monkeypatch):
+def test_bounce_guard_pauses_only_when_critical(monkeypatch):
     sets = {}
-    monkeypatch.setattr(db, "outreach_stats", lambda days=7: (40, 2))  # 5%
+    monkeypatch.setattr(db, "outreach_stats", lambda days=7: (60, 7))  # 11.7%, 7 bounces
     monkeypatch.setattr(db, "set_state", lambda k, v: sets.update({k: v}))
     assert apollo.bounce_guard() is not None
     assert sets == {"push_paused": "true"}
@@ -279,9 +279,13 @@ def test_bounce_guard_pauses_above_3pct(monkeypatch):
 
 def test_bounce_guard_ignores_small_sample_and_low_rate(monkeypatch):
     monkeypatch.setattr(db, "set_state", lambda k, v: pytest.fail("não devia pausar"))
-    monkeypatch.setattr(db, "outreach_stats", lambda days=7: (10, 5))
+    monkeypatch.setattr(db, "outreach_stats", lambda days=7: (10, 5))     # amostra pequena
     assert apollo.bounce_guard() is None
-    monkeypatch.setattr(db, "outreach_stats", lambda days=7: (100, 2))
+    monkeypatch.setattr(db, "outreach_stats", lambda days=7: (24, 1))     # o caso de 05/10
+    assert apollo.bounce_guard() is None
+    monkeypatch.setattr(db, "outreach_stats", lambda days=7: (100, 9))    # 9%: ainda não
+    assert apollo.bounce_guard() is None
+    monkeypatch.setattr(db, "outreach_stats", lambda days=7: (40, 6))     # 15% mas < 50 inscritos
     assert apollo.bounce_guard() is None
 
 

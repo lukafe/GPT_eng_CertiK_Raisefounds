@@ -91,22 +91,26 @@ def seq_for(company: dict, default_seq: str, older_seq: str | None, today=None) 
 
 # --- trava de bounce e rampa de volume -------------------------------------------
 
-BOUNCE_PAUSE_PCT = 0.03       # acima disso, pausa inscrições novas sozinho
+# Trava de bounce só para cenário crítico (decisão do Lucas, 07/10): ≥ 10% de bounce, com pelo
+# menos 50 inscritos e 5 bounces nos últimos 7 dias. Antes (3% a partir de 20) um único bounce
+# de um email antigo parou tudo. O Apollo ainda tem a própria pausa (6% com 200+ envios).
+BOUNCE_PAUSE_PCT = 0.10       # a partir disso, pausa inscrições novas sozinho
+BOUNCE_MIN_SAMPLE = 50        # mínimo de inscritos em 7 dias para a taxa valer
+BOUNCE_MIN_COUNT = 5          # e mínimo de bounces (1 ou 2 bounces nunca pausam)
 PER_COMPANY_PER_DAY = 3       # no máximo 3 pessoas da mesma empresa entram por dia
-BOUNCE_MIN_SAMPLE = 20        # mínimo de inscritos em 7 dias para a taxa valer
 RAMP_STEPS = (20, 50, 100)    # degraus da rampa (teto diário)
 RAMP_ADVANCE_MAX_BOUNCE = 0.02
 
 
 def bounce_guard() -> str | None:
-    """Liga source_state.push_paused se o bounce dos inscritos nos últimos 7 dias for ≥ 3%.
-    Devolve o motivo quando pausa; None quando está tudo bem."""
+    """Liga source_state.push_paused só em cenário crítico: bounce ≥ 10% dos inscritos nos
+    últimos 7 dias, com pelo menos 50 inscritos e 5 bounces. Devolve o motivo quando pausa."""
     sent, bounced = db.outreach_stats(days=7)
-    if sent < BOUNCE_MIN_SAMPLE or bounced / sent < BOUNCE_PAUSE_PCT:
+    if sent < BOUNCE_MIN_SAMPLE or bounced < BOUNCE_MIN_COUNT or bounced / sent < BOUNCE_PAUSE_PCT:
         return None
     db.set_state("push_paused", "true")
-    return (f"bounce de {bounced / sent:.1%} nos últimos 7 dias ({bounced}/{sent}), acima de 3%: "
-            f"inscrições novas pausadas automaticamente")
+    return (f"bounce de {bounced / sent:.1%} nos últimos 7 dias ({bounced}/{sent}), "
+            f"acima de {BOUNCE_PAUSE_PCT:.0%}: inscrições novas pausadas automaticamente")
 
 
 def daily_cap() -> int:

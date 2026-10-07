@@ -66,8 +66,10 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
 | `email_daily_cap` | degrau atual da rampa |
 | `max_contacts_per_company` | pessoas por empresa (padrão 10) |
 
-Trava de bounce: se os inscritos dos últimos 7 dias tiverem bounce ≥ 3% (mínimo 20),
-o push liga `push_paused` sozinho e registra o motivo em `runs`.
+Trava de bounce (só cenário crítico, desde 07/10): se os inscritos dos últimos 7 dias tiverem
+bounce ≥ 10%, com pelo menos 50 inscritos e 5 bounces, o push liga `push_paused` sozinho e registra
+o motivo em `runs`. O monitor continua alertando a partir de 3%. O Apollo tem a própria pausa
+(6% com 200+ envios).
 
 ## Como funciona a fonte (scraper do Telegram)
 
@@ -105,7 +107,7 @@ python main.py             # rodada completa
 | `APOLLO_KEY` | Apollo → Settings → Integrations → API (master key) |
 | `APOLLO_SEQ_ID` | URL da sequência: `app.apollo.io/#/sequences/<SEQ_ID>` |
 | `APOLLO_MAILBOX_ID` | `python apollo.py --list-mailboxes` |
-| `MAX_PER_DAY` | teto global de contatos/dia (default 40) |
+| `MAX_PER_DAY` | pessoas novas na sequência por dia (16 desde 07/10: a caixa manda 50 emails/dia somando follow-ups, e cada pessoa recebe 3 na 1ª semana) |
 | `COMPANIES_PER_DAY` | empresas enriquecidas/dia (default 10) |
 
 Setup único do banco: colar `schema.sql` no SQL Editor do Supabase e rodar.

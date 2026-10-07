@@ -39,7 +39,7 @@ jobs:
       APOLLO_KEY: ${{ secrets.APOLLO_KEY }}
       APOLLO_SEQ_ID: ${{ secrets.APOLLO_SEQ_ID }}
       APOLLO_MAILBOX_ID: ${{ secrets.APOLLO_MAILBOX_ID }}
-      MAX_PER_DAY: "40"
+      MAX_PER_DAY: "16"
       COMPANIES_PER_DAY: "10"
     steps:
       - uses: actions/checkout@v4
