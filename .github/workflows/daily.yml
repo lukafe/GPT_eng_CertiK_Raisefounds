@@ -11,6 +11,9 @@ on:
         description: "Dry-run (não envia nada ao Apollo)"
         type: boolean
         default: false
+      steps:
+        description: "Etapas (ex.: push para só inscrever quem já está pronto)"
+        default: "fetch,enrich,push,phones,sync"
 
 concurrency:
   group: outbound-pipeline
@@ -30,7 +33,9 @@ jobs:
       APOLLO_MAILBOX_ID: ${{ secrets.APOLLO_MAILBOX_ID }}
       NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-      MAX_PER_DAY: "40"
+      # 16 pessoas novas/dia: a caixa do Apollo manda 50 emails/dia (1º contato + follow-ups)
+      # e cada pessoa recebe 3 emails na 1ª semana (D0, D3, D7).
+      MAX_PER_DAY: "16"
       COMPANIES_PER_DAY: "40"
       TG_PHONE_REVEALS_PER_DAY: "5"   # telefones de decisores pelo waterfall do Apollo (~8 créditos cada)
     steps:
@@ -45,10 +50,11 @@ jobs:
 
       - name: Pipeline
         run: |
+          STEPS="${{ inputs.steps }}"
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            python main.py --dry-run
+            python main.py --dry-run --steps "${STEPS:-fetch,enrich,push,phones,sync}"
           else
-            python main.py
+            python main.py --steps "${STEPS:-fetch,enrich,push,phones,sync}"
           fi
 
       - name: Log da rodada

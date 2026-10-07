@@ -17,7 +17,7 @@ API = "https://api.apollo.io/api/v1"
 STEP = "monitor_apollo"
 EMAIL_ACCOUNT_ID = "email:apollo_free"   # é a conta de email que recebe os toques no Supabase
 LOW_CREDITS = 100                        # abaixo disso o monitor acende o alerta de créditos
-BOUNCE_ALERT = 0.03                      # mesma régua da trava de bounce
+BOUNCE_ALERT = 0.03                      # só alerta no monitor (a trava pausa em 10%)
 BOUNCE_MIN_SAMPLE = 20
 
 
