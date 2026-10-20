@@ -190,3 +190,56 @@ def test_monitor_flags_key_from_old_workspace():
                                    MAIN, 16, False, expected_team=TEAM)
     assert integ["status"] == "erro"
     assert any("não do da CertiK" in a for a in integ["data"]["alerts"])
+
+
+# --- dedupe do Apollo por pessoa e inscrição pulada -------------------------------------
+
+class _Resp:
+    def __init__(self, data):
+        self._d = data
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._d
+
+
+def test_create_contact_rejects_person_match_with_other_email(monkeypatch):
+    monkeypatch.setenv("APOLLO_KEY", "k")
+    monkeypatch.setattr(apollo, "http_call", lambda *a, **k: _Resp(
+        {"contact": {"id": "antigo", "email": "contact@huddle01.com"}}))
+    with pytest.raises(apollo.EmailMismatch):
+        apollo.create_contact({"email": "ayushranjan@huddle01.com"}, {"name": "Huddle01"})
+
+
+def test_add_to_sequence_raises_when_apollo_skips(monkeypatch):
+    monkeypatch.setenv("APOLLO_KEY", "k")
+    sent = {}
+    monkeypatch.setattr(apollo, "http_call", lambda *a, **k: sent.update(k["json"]) or _Resp(
+        {"skipped_contact_ids": {"c1": "contacts_with_job_change"}}))
+    with pytest.raises(apollo.EnrollSkipped, match="job_change"):
+        apollo.add_to_sequence("c1", MAIN, MAILBOX)
+    assert sent["sequence_same_company_in_same_campaign"] is True
+
+
+def test_push_sends_mismatch_and_skips_to_review(state, monkeypatch):
+    ready = [{"id": 11, "email": "g@x.io", "company_id": 1, "companies": {"name": "X"}},
+             {"id": 12, "email": "h@x.io", "company_id": 2, "companies": {"name": "Y"}}]
+    calls = _push_env(monkeypatch, ready)
+
+    def create(c, co):
+        if c["id"] == 11:
+            raise apollo.EmailMismatch("outro email")
+        return "new-12"
+
+    def add(cid, seq, mb):
+        raise apollo.EnrollSkipped("contacts_with_job_change")
+
+    monkeypatch.setattr(apollo, "create_contact", create)
+    monkeypatch.setattr(apollo, "add_to_sequence", add)
+    out = apollo.push_to_apollo()
+    assert out["pushed"] == 0
+    assert (11, {"status": "review"}) in calls["updated"]
+    assert (12, {"status": "review"}) in calls["updated"]
+    assert calls["outreach"] == []

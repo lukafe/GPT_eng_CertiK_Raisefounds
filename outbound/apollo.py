@@ -218,7 +218,21 @@ def create_contact(contact: dict, company: dict) -> str:
                          "run_dedupe": True,
                      })
     resp.raise_for_status()
-    return resp.json()["contact"]["id"]
+    created = resp.json()["contact"]
+    got = (created.get("email") or "").strip().lower()
+    if got and got != contact["email"].strip().lower():
+        # run_dedupe também casa pela PESSOA: pode devolver um contato antigo do time com outro
+        # email (ex.: contact@empresa). Inscrever esse id mandaria email para o endereço errado.
+        raise EmailMismatch(f"Apollo devolveu o contato {created['id']} com outro email ({got})")
+    return created["id"]
+
+
+class EmailMismatch(RuntimeError):
+    """O contato achado/criado no Apollo tem email diferente do nosso."""
+
+
+class EnrollSkipped(RuntimeError):
+    """O Apollo recusou a inscrição (troca de emprego, contato de colega, etc.)."""
 
 
 def find_contact_by_email(email: str) -> str | None:
@@ -245,14 +259,21 @@ def ensure_contact(contact: dict, company: dict) -> str:
 
 
 def add_to_sequence(apollo_id: str, seq_id: str, mailbox_id: str) -> None:
+    """Inscreve e confere: o Apollo devolve 200 mesmo quando pula o contato (skipped_contact_ids),
+    e aí ele não pode ser gravado como in_sequence."""
     resp = http_call("POST", f"{BASE}/emailer_campaigns/{seq_id}/add_contact_ids",
                      step="push_to_apollo", headers=headers(), json={
                          "contact_ids": [apollo_id],
                          "emailer_campaign_id": seq_id,
                          "send_email_from_email_account_id": mailbox_id,
                          "sequence_active_in_other_campaigns": False,
+                         # várias pessoas da mesma empresa entram na mesma sequência (até 3/dia)
+                         "sequence_same_company_in_same_campaign": True,
                      })
     resp.raise_for_status()
+    skipped = (resp.json() or {}).get("skipped_contact_ids") or {}
+    if apollo_id in skipped:
+        raise EnrollSkipped(f"Apollo pulou a inscrição: {skipped[apollo_id]}")
 
 
 def remove_from_sequence(apollo_id: str, seq_id: str) -> None:
@@ -420,6 +441,11 @@ def push_to_apollo() -> dict:
             pushed += 1
             pushed_contacts.append({**c, "_company_name": company.get("name")})
             time.sleep(1)  # educação com a API (80 chamadas em rajada = risco de 429)
+        except (EmailMismatch, EnrollSkipped) as e:
+            # Não tenta de novo todo dia: fica para o Lucas revisar.
+            db.update_contact(c["id"], status="review")
+            log("push_to_apollo", f"para revisão {c['email']}: {e}")
+            db.log_run("push_to_apollo", False, f"review {c['email']}: {e}")
         except Exception as e:  # noqa: BLE001
             log("push_to_apollo", f"ERRO em {c['email']}: {e}")
             db.log_run("push_to_apollo", False, f"{c['email']}: {e}")

@@ -106,15 +106,21 @@ def release_lock() -> None:
     set_state(LOCK_KEY, "")
 
 
+def _first_touch_only(q):
+    """Linhas de outreach que são 1º contato: a continuação (migração do workspace antigo, 1º
+    email só 14 dias depois) não conta para teto diário, limite por empresa nem trava de bounce."""
+    cont = (get_state("apollo_seq_id_continuation") or "").strip()
+    return q.neq("sequence_id", cont) if cont else q
+
+
 def count_pushed_today() -> int:
     """Contatos que entraram em sequência hoje (UTC) — pra rodada dupla não estourar o teto."""
     from datetime import datetime, timezone
 
     today = datetime.now(timezone.utc).date().isoformat()
-    resp = (
-        client().table("outreach").select("id", count="exact")
-        .gte("added_at", today).limit(1).execute()
-    )
+    resp = _first_touch_only(
+        client().table("outreach").select("id", count="exact").gte("added_at", today)
+    ).limit(1).execute()
     return resp.count or 0
 
 
@@ -123,10 +129,9 @@ def pushed_today_by_company() -> dict[int, int]:
     from datetime import datetime, timezone
 
     today = datetime.now(timezone.utc).date().isoformat()
-    rows = (
-        client().table("outreach").select("contacts(company_id)")
-        .gte("added_at", today).execute().data
-    )
+    rows = _first_touch_only(
+        client().table("outreach").select("contacts(company_id)").gte("added_at", today)
+    ).execute().data
     counts: dict[int, int] = {}
     for r in rows:
         cid = (r.get("contacts") or {}).get("company_id")
@@ -271,12 +276,11 @@ def outreach_stats(days: int = 7) -> tuple[int, int]:
     from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc)
-    rows = (
+    rows = _first_touch_only(
         client().table("outreach").select("bounced")
         .gte("added_at", (now - timedelta(days=days + 1)).isoformat())
         .lt("added_at", (now - timedelta(days=1)).isoformat())
-        .execute().data
-    )
+    ).execute().data
     return len(rows), sum(1 for r in rows if r.get("bounced"))
 
 

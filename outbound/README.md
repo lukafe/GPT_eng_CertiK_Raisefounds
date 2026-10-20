@@ -78,7 +78,10 @@ cada sequência com papel (`main`, `continuation`, `older`, `legacy`) e cadênci
 `legacy` e o calendário do monitor lê a cadência dela.
 
 Dedupe: antes de inscrever, `db.prior_email_contact` confere `outreach` e `touches` (por email) e
-pula quem já recebeu qualquer email (status `already_contacted`).
+pula quem já recebeu qualquer email (status `already_contacted`). O `run_dedupe` do Apollo casa
+também pela pessoa e pode devolver um contato antigo do time com outro email; nesse caso, e quando o
+Apollo pula a inscrição (troca de emprego, contato de colega), o contato vai para `review` em vez de
+ser gravado como inscrito. A continuação não conta para o teto diário nem para a trava de bounce.
 
 Trava de bounce (só cenário crítico, desde 07/10): se os inscritos dos últimos 7 dias tiverem
 bounce ≥ 10%, com pelo menos 50 inscritos e 5 bounces, o push liga `push_paused` sozinho e registra
