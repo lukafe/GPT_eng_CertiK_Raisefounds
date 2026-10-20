@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import apollo
 import apollo_enrich
 import db
-from common import env, http_call, log
+from common import http_call, log
 
 API = "https://api.apollo.io/api/v1"
 STEP = "monitor_apollo"
@@ -118,11 +118,22 @@ def sequence_alerts(seqs: list[dict], current_id: str | None) -> list[str]:
     return alerts
 
 
+def workspace_summary(profile: dict | None, expected_team: str | None) -> dict:
+    """Workspace (time) a que a APOLLO_KEY pertence, comparado com o esperado (source_state)."""
+    team = str((profile or {}).get("team_id") or "") or None
+    ok = None if not (team and expected_team) else team == expected_team
+    return {"team_id": team, "expected_team_id": expected_team, "ok": ok,
+            "label": "CertiK" if ok else (team or "desconhecido")}
+
+
 def build_payload(profile: dict | None, accounts: list[dict], campaigns: list[dict],
                   mailbox_id: str | None, current_id: str | None,
-                  daily_cap: int | None, paused: bool) -> tuple[dict, dict]:
+                  daily_cap: int | None, paused: bool,
+                  expected_team: str | None = None,
+                  continuation_id: str | None = None) -> tuple[dict, dict]:
     """→ (linha de integrations.apollo, colunas live_* da conta de email)."""
     credits = credit_summary(profile)
+    workspace = workspace_summary(profile, expected_team)
     mailbox = mailbox_summary(accounts, mailbox_id)
     # só as sequências do dono da caixa (num time com mais gente, as dos colegas ficam de fora)
     owner = mailbox.get("user_id")
@@ -131,6 +142,9 @@ def build_payload(profile: dict | None, accounts: list[dict], campaigns: list[di
     alerts = sequence_alerts(seqs, current_id)
     current = next((s for s in seqs if s["id"] == current_id), None)
 
+    if workspace["ok"] is False:
+        alerts.insert(0, f"A APOLLO_KEY é do workspace {workspace['team_id']}, não do da CertiK "
+                         f"({workspace['expected_team_id']})")
     if not mailbox["found"]:
         alerts.insert(0, "A caixa de envio configurada não aparece")
     elif not mailbox["active"]:
@@ -138,7 +152,7 @@ def build_payload(profile: dict | None, accounts: list[dict], campaigns: list[di
     if isinstance(credits["lead_left"], (int, float)) and credits["lead_left"] < LOW_CREDITS:
         alerts.append(f"Só {_num(credits['lead_left'])} créditos de lead")
 
-    mailbox_ok = mailbox["found"] and mailbox["active"]
+    mailbox_ok = mailbox["found"] and mailbox["active"] and workspace["ok"] is not False
     status = "erro" if not mailbox_ok else ("atencao" if alerts else "ok")
     credit_txt = (f"{_num(credits['lead_left'])} de {_num(credits['lead_limit'])} créditos de lead"
                   if credits["lead_left"] is not None else "créditos indisponíveis")
@@ -147,10 +161,14 @@ def build_payload(profile: dict | None, accounts: list[dict], campaigns: list[di
         "status": status,
         "note": f"Plano pago · {credit_txt} · {n_active} sequência(s) ativa(s)",
         "data": {"credits": credits, "mailbox": mailbox, "sequences": seqs, "alerts": alerts,
-                 "current_sequence_id": current_id},
+                 "workspace": workspace,
+                 "current_sequence_id": current_id,
+                 "current_sequence_name": current["name"] if current else None,
+                 "continuation_sequence_id": continuation_id},
     }
 
-    parts = [f"Caixa ativa no Apollo ({mailbox['email']})" if mailbox_ok
+    ws = f", workspace {workspace['label']}" if workspace["team_id"] else ""
+    parts = [f"Caixa ativa no Apollo ({mailbox['email']}{ws})" if mailbox_ok
              else "Caixa de envio com problema no Apollo"]
     if current:
         parts.append(f"inscrições vão para “{current['name']}”")
@@ -184,7 +202,9 @@ def main() -> int:
         paused = (db.get_state("push_paused") or "").strip().lower() == "true"
         integration, live = build_payload(
             profile, accounts, campaigns,
-            env("APOLLO_MAILBOX_ID", required=False), current_id, apollo.daily_cap(), paused,
+            apollo.configured_mailbox_id(), current_id, apollo.daily_cap(), paused,
+            expected_team=apollo.expected_team_id(),
+            continuation_id=apollo.continuation_seq_id(),
         )
         # o calendário do monitor usa isso para prever quando cada empresa da fila é enriquecida
         live["live_data"]["companies_per_day"] = apollo_enrich.companies_per_day()

@@ -13,7 +13,7 @@ Uso: APOLLO_TEST_EMAIL=lucas@... python send_test_email.py
 
 from datetime import datetime, timedelta, timezone
 
-from apollo import add_to_sequence, create_contact, resolve_mailbox_id
+from apollo import add_to_sequence, assert_workspace, create_contact, current_seq_id, resolve_mailbox_id
 from common import env, log
 
 # Um fuso "de cidade" por offset UTC (o Apollo aceita nomes IANA)
@@ -50,7 +50,8 @@ def next_window_timezone() -> tuple[str, int]:
 
 def main() -> None:
     test_email = env("APOLLO_TEST_EMAIL")
-    seq_id = env("APOLLO_SEQ_ID")
+    assert_workspace()
+    seq_id = current_seq_id()
     mailbox = resolve_mailbox_id()
     tz, wait_min = next_window_timezone()
 
@@ -69,7 +70,7 @@ def main() -> None:
         f"   Assunto esperado: 'Pipeline Teste × CertiK'.\n\n"
         f"⚠️ Depois de validar na caixa de entrada, apague o contato "
         f"'Lucas Pipeline Teste' no Apollo (ou responda o email — stop-on-reply "
-        f"encerra a sequência) para o follow-up de 5 dias não disparar.\n"
+        f"encerra a sequência) para o follow-up de 3 dias não disparar.\n"
         f"   apollo_id: {apollo_id}"
     )
 
