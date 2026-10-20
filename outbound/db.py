@@ -106,15 +106,21 @@ def release_lock() -> None:
     set_state(LOCK_KEY, "")
 
 
+def _first_touch_only(q):
+    """Linhas de outreach que são 1º contato: a continuação (migração do workspace antigo, 1º
+    email só 14 dias depois) não conta para teto diário, limite por empresa nem trava de bounce."""
+    cont = (get_state("apollo_seq_id_continuation") or "").strip()
+    return q.neq("sequence_id", cont) if cont else q
+
+
 def count_pushed_today() -> int:
     """Contatos que entraram em sequência hoje (UTC) — pra rodada dupla não estourar o teto."""
     from datetime import datetime, timezone
 
     today = datetime.now(timezone.utc).date().isoformat()
-    resp = (
-        client().table("outreach").select("id", count="exact")
-        .gte("added_at", today).limit(1).execute()
-    )
+    resp = _first_touch_only(
+        client().table("outreach").select("id", count="exact").gte("added_at", today)
+    ).limit(1).execute()
     return resp.count or 0
 
 
@@ -123,10 +129,9 @@ def pushed_today_by_company() -> dict[int, int]:
     from datetime import datetime, timezone
 
     today = datetime.now(timezone.utc).date().isoformat()
-    rows = (
-        client().table("outreach").select("contacts(company_id)")
-        .gte("added_at", today).execute().data
-    )
+    rows = _first_touch_only(
+        client().table("outreach").select("contacts(company_id)").gte("added_at", today)
+    ).execute().data
     counts: dict[int, int] = {}
     for r in rows:
         cid = (r.get("contacts") or {}).get("company_id")
@@ -271,22 +276,67 @@ def outreach_stats(days: int = 7) -> tuple[int, int]:
     from datetime import datetime, timedelta, timezone
 
     now = datetime.now(timezone.utc)
-    rows = (
+    rows = _first_touch_only(
         client().table("outreach").select("bounced")
         .gte("added_at", (now - timedelta(days=days + 1)).isoformat())
         .lt("added_at", (now - timedelta(days=1)).isoformat())
-        .execute().data
-    )
+    ).execute().data
     return len(rows), sum(1 for r in rows if r.get("bounced"))
 
 
-def get_outreach_step(contact_id: int) -> int | None:
-    data = (
-        client().table("outreach").select("last_step")
-        .eq("contact_id", contact_id).limit(1).execute().data
-    )
+def get_outreach_step(contact_id: int, sequence_id: str | None = None) -> int | None:
+    q = client().table("outreach").select("last_step").eq("contact_id", contact_id)
+    if sequence_id:
+        q = q.eq("sequence_id", sequence_id)
+    data = q.order("id", desc=True).limit(1).execute().data
     return data[0]["last_step"] if data else None
 
 
-def update_outreach_by_contact(contact_id: int, **fields) -> None:
-    client().table("outreach").update(fields).eq("contact_id", contact_id).execute()
+def update_outreach_by_contact(contact_id: int, sequence_id: str | None = None, **fields) -> None:
+    """Atualiza a(s) linha(s) de outreach do contato; com sequence_id, só a daquela sequência
+    (um contato migrado tem a linha da sequência antiga e a da continuação)."""
+    q = client().table("outreach").update(fields).eq("contact_id", contact_id)
+    if sequence_id:
+        q = q.eq("sequence_id", sequence_id)
+    q.execute()
+
+
+def legacy_sequence_ids() -> set[str]:
+    """Sequências do workspace antigo do Apollo (apollo_sequences.role = 'legacy')."""
+    try:
+        rows = client().table("apollo_sequences").select("id").eq("role", "legacy").execute().data
+    except Exception as e:  # noqa: BLE001  tabela ausente não pode derrubar o pipeline
+        log("db", f"apollo_sequences indisponível: {e}")
+        return set()
+    return {r["id"] for r in rows}
+
+
+EMAIL_TOUCH_SENT = {"sent", "replied", "bounced"}
+
+
+def prior_email_contact(contact: dict) -> str | None:
+    """Motivo, se esse email já recebeu algo antes (qualquer sequência ou email manual):
+    'outreach <sequência>' ou 'touch <conta>'. None = nunca recebeu.
+
+    Confere por email (minúsculo), não só pelo id da linha, para pegar duplicatas."""
+    email = (contact.get("email") or "").strip().lower()
+    if not email:
+        return None
+    pattern = email.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    ids = [r["id"] for r in client().table("contacts").select("id")
+           .ilike("email", pattern).execute().data]
+    if contact.get("id") and contact["id"] not in ids:
+        ids.append(contact["id"])
+    if not ids:
+        return None
+    out = (client().table("outreach").select("sequence_id")
+           .in_("contact_id", ids).limit(1).execute().data)
+    if out:
+        return f"outreach {out[0]['sequence_id']}"
+    touches = (client().table("touches").select("account_id,status")
+               .in_("contact_id", ids).eq("channel", "email").eq("direction", "out")
+               .execute().data)
+    sent = [t for t in touches if (t.get("status") or "") in EMAIL_TOUCH_SENT]
+    if sent:
+        return f"touch {sent[0].get('account_id') or 'email'}"
+    return None

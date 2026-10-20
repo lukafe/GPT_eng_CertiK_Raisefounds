@@ -62,9 +62,26 @@ O Hunter saiu do pipeline: não há mais código, chave nem healthcheck dele.
 |---|---|
 | `push_paused` | `true` = ninguém novo entra na sequência (follow-ups seguem) |
 | `apollo_seq_id` | sequência que recebe inscrições novas (sem ela, `APOLLO_SEQ_ID`) |
+| `apollo_seq_id_continuation` | sequência de continuação (D+30→D+180) de quem migrou no meio da cadência |
+| `apollo_mailbox_id` | caixa de envio (sem ela, `APOLLO_MAILBOX_ID`); precisa estar ativa no workspace |
+| `apollo_team_id` | workspace esperado; push e test-email abortam se a `APOLLO_KEY` for de outro |
 | `email_ramp` | `on` liga a rampa 20 → 50 → 100/dia (nunca passa de `MAX_PER_DAY`) |
 | `email_daily_cap` | degrau atual da rampa |
 | `max_contacts_per_company` | pessoas por empresa (padrão 10) |
+
+### Workspace do Apollo (out/2026)
+Desde 20/10 tudo roda no workspace da CertiK (team `642eda7b5bdc7b00c25b1923`), caixa
+lucas.ceccon@certik.com. IDs de contato são por workspace: `contacts.apollo_id` é do workspace
+pessoal antigo e **nunca** é reutilizado; o pipeline acha/cria o contato pelo email e grava
+`contacts.apollo_contact_id_certik`. `apollo_person_id` é global. A tabela `apollo_sequences` lista
+cada sequência com papel (`main`, `continuation`, `older`, `legacy`) e cadência; o sync ignora as
+`legacy` e o calendário do monitor lê a cadência dela.
+
+Dedupe: antes de inscrever, `db.prior_email_contact` confere `outreach` e `touches` (por email) e
+pula quem já recebeu qualquer email (status `already_contacted`). O `run_dedupe` do Apollo casa
+também pela pessoa e pode devolver um contato antigo do time com outro email; nesse caso, e quando o
+Apollo pula a inscrição (troca de emprego, contato de colega), o contato vai para `review` em vez de
+ser gravado como inscrito. A continuação não conta para o teto diário nem para a trava de bounce.
 
 Trava de bounce (só cenário crítico, desde 07/10): se os inscritos dos últimos 7 dias tiverem
 bounce ≥ 10%, com pelo menos 50 inscritos e 5 bounces, o push liga `push_paused` sozinho e registra

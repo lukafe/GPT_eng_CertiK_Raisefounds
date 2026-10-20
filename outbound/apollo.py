@@ -12,9 +12,40 @@ from common import env, http_call, log
 
 BASE = "https://api.apollo.io/v1"
 
+# IDs de contato do Apollo são por workspace. contacts.apollo_id é do workspace pessoal antigo
+# (desativado) e nunca é reutilizado; o id no workspace da CertiK fica nesta coluna.
+CONTACT_ID_COL = "apollo_contact_id_certik"
+
 
 def headers() -> dict:
     return {"X-Api-Key": env("APOLLO_KEY"), "Content-Type": "application/json"}
+
+
+def _state(key: str) -> str:
+    return (db.get_state(key) or "").strip()
+
+
+def expected_team_id() -> str | None:
+    """Workspace (team) do Apollo em que o pipeline deve operar."""
+    return _state("apollo_team_id") or env("APOLLO_TEAM_ID", required=False) or None
+
+
+def api_profile() -> dict:
+    resp = http_call("GET", "https://api.apollo.io/api/v1/users/api_profile",
+                     step="apollo", headers=headers())
+    resp.raise_for_status()
+    return resp.json()
+
+
+def assert_workspace() -> str:
+    """Aborta se a APOLLO_KEY não for do workspace esperado (ex.: chave antiga ainda no secret).
+    Sem isso, contatos e inscrições iriam parar no workspace errado."""
+    team = str(api_profile().get("team_id") or "")
+    expected = expected_team_id()
+    if expected and team != expected:
+        raise RuntimeError(f"APOLLO_KEY é do workspace {team or '?'}, não do esperado ({expected}); "
+                           "troque o secret APOLLO_KEY pela chave do workspace da CertiK")
+    return team
 
 
 def usage_stats() -> dict:
@@ -31,25 +62,35 @@ def list_email_accounts() -> list[dict]:
     return data.get("email_accounts", data if isinstance(data, list) else [])
 
 
-def resolve_mailbox_id() -> str:
-    """APOLLO_MAILBOX_ID do .env; se vazio, descobre via API.
+def configured_mailbox_id() -> str | None:
+    """Caixa de envio configurada: source_state.apollo_mailbox_id (trocável pelo Supabase) e,
+    sem ela, o secret APOLLO_MAILBOX_ID."""
+    return _state("apollo_mailbox_id") or env("APOLLO_MAILBOX_ID", required=False) or None
 
-    Com uma única caixa ativa conectada (o Gmail institucional do Lucas),
-    usa ela. Com mais de uma, exige a variável no .env para não enviar
-    da caixa errada.
-    """
-    configured = env("APOLLO_MAILBOX_ID", required=False)
+
+def pick_mailbox(accounts: list[dict], configured: str | None) -> dict:
+    """Escolhe a caixa entre as do workspace. A configurada precisa existir e estar ativa
+    (um id do workspace antigo não aparece aqui e para tudo). Sem configuração, só aceita
+    se houver exatamente uma caixa ativa — num time com várias pessoas, nunca adivinha."""
+    active = [a for a in accounts if a.get("active") is not False]
     if configured:
-        return str(configured)
-    accounts = [a for a in list_email_accounts() if a.get("active") is not False]
-    if len(accounts) == 1:
-        mailbox = str(accounts[0]["id"])
-        log("apollo", f"mailbox resolvido via API: {mailbox} ({accounts[0].get('email')})")
-        return mailbox
+        hit = next((a for a in active if str(a.get("id")) == str(configured)), None)
+        if not hit:
+            raise RuntimeError(f"caixa {configured} não está ativa neste workspace do Apollo "
+                               f"(caixas: {[a.get('email') for a in active]})")
+        return hit
+    if len(active) == 1:
+        return active[0]
     raise RuntimeError(
-        f"{len(accounts)} caixas ativas no Apollo — defina APOLLO_MAILBOX_ID no .env "
+        f"{len(active)} caixas ativas no Apollo — defina source_state.apollo_mailbox_id "
         f"(rode: python apollo.py --list-mailboxes)"
     )
+
+
+def resolve_mailbox_id() -> str:
+    mailbox = pick_mailbox(list_email_accounts(), configured_mailbox_id())
+    log("apollo", f"caixa de envio: {mailbox.get('email')} ({mailbox.get('id')})")
+    return str(mailbox["id"])
 
 
 def get_sequence(seq_id: str) -> dict:
@@ -62,7 +103,24 @@ def get_sequence(seq_id: str) -> dict:
 def current_seq_id() -> str:
     """Sequência que recebe as inscrições novas. source_state.apollo_seq_id permite trocar
     de sequência pelo Supabase, sem mexer no secret do GitHub; sem ela vale APOLLO_SEQ_ID."""
-    return (db.get_state("apollo_seq_id") or "").strip() or env("APOLLO_SEQ_ID")
+    return _state("apollo_seq_id") or env("APOLLO_SEQ_ID")
+
+
+def continuation_seq_id() -> str | None:
+    """Sequência de continuação (D+30→D+180) para quem migrou no meio da cadência antiga."""
+    return _state("apollo_seq_id_continuation") or env("APOLLO_CONTINUATION_SEQ_ID", required=False) or None
+
+
+def active_seq_ids() -> set[str]:
+    """Sequências do workspace atual que o sync acompanha. As do workspace antigo ('legacy')
+    ficam de fora: a chave nova não as enxerga."""
+    ids = {str(current_seq_id())}
+    for extra in (older_seq_id(), continuation_seq_id()):
+        if extra:
+            ids.add(str(extra))
+    legacy = db.legacy_sequence_ids()
+    ids |= {s for s in db.outreach_sequence_ids() if s not in legacy}
+    return ids - legacy
 
 
 OLDER_RAISE_DAYS = 30   # raise com mais de 30 dias vai para a sequência de raises antigos
@@ -146,7 +204,8 @@ def maybe_advance_ramp() -> str | None:
 
 
 def create_contact(contact: dict, company: dict) -> str:
-    """POST /contacts → apollo contact id."""
+    """POST /contacts → apollo contact id. run_dedupe: se o email já é contato neste workspace,
+    o Apollo devolve o existente em vez de criar duplicata."""
     resp = http_call("POST", f"{BASE}/contacts", step="push_to_apollo",
                      headers=headers(), json={
                          "first_name": contact.get("first_name"),
@@ -156,20 +215,65 @@ def create_contact(contact: dict, company: dict) -> str:
                          "organization_name": company.get("name"),
                          "website_url": company.get("domain"),
                          "time_zone": company.get("time_zone") or "Etc/UTC",
+                         "run_dedupe": True,
                      })
     resp.raise_for_status()
-    return resp.json()["contact"]["id"]
+    created = resp.json()["contact"]
+    got = (created.get("email") or "").strip().lower()
+    if got and got != contact["email"].strip().lower():
+        # run_dedupe também casa pela PESSOA: pode devolver um contato antigo do time com outro
+        # email (ex.: contact@empresa). Inscrever esse id mandaria email para o endereço errado.
+        raise EmailMismatch(f"Apollo devolveu o contato {created['id']} com outro email ({got})")
+    return created["id"]
+
+
+class EmailMismatch(RuntimeError):
+    """O contato achado/criado no Apollo tem email diferente do nosso."""
+
+
+class EnrollSkipped(RuntimeError):
+    """O Apollo recusou a inscrição (troca de emprego, contato de colega, etc.)."""
+
+
+def find_contact_by_email(email: str) -> str | None:
+    """Contato já existente neste workspace com exatamente esse email (busca grátis)."""
+    resp = http_call("POST", f"{BASE}/contacts/search", step="push_to_apollo",
+                     headers=headers(), json={"q_keywords": email, "per_page": 10})
+    resp.raise_for_status()
+    target = email.strip().lower()
+    for c in resp.json().get("contacts", []):
+        if (c.get("email") or "").strip().lower() == target:
+            return c["id"]
+    return None
+
+
+def ensure_contact(contact: dict, company: dict) -> str:
+    """Id do contato no workspace da CertiK: o já gravado em apollo_contact_id_certik, senão
+    acha pelo email ou cria. Grava o id no Supabase. Nunca usa contacts.apollo_id (workspace antigo)."""
+    cid = contact.get(CONTACT_ID_COL)
+    if cid:
+        return cid
+    cid = find_contact_by_email(contact["email"]) or create_contact(contact, company)
+    db.update_contact(contact["id"], **{CONTACT_ID_COL: cid})
+    return cid
 
 
 def add_to_sequence(apollo_id: str, seq_id: str, mailbox_id: str) -> None:
+    """Inscreve e confere: o Apollo devolve 200 mesmo quando pula o contato (skipped_contact_ids),
+    e aí ele não pode ser gravado como in_sequence."""
     resp = http_call("POST", f"{BASE}/emailer_campaigns/{seq_id}/add_contact_ids",
                      step="push_to_apollo", headers=headers(), json={
                          "contact_ids": [apollo_id],
                          "emailer_campaign_id": seq_id,
                          "send_email_from_email_account_id": mailbox_id,
                          "sequence_active_in_other_campaigns": False,
+                         # várias pessoas da mesma empresa entram na mesma sequência (até 3/dia)
+                         "sequence_same_company_in_same_campaign": True,
                      })
     resp.raise_for_status()
+    skipped = (resp.json() or {}).get("skipped_contact_ids") or {}
+    if apollo_id in skipped:
+        raise EnrollSkipped(f"Apollo pulou a inscrição: {skipped[apollo_id]}")
 
 
 def remove_from_sequence(apollo_id: str, seq_id: str) -> None:
@@ -293,6 +397,11 @@ def push_to_apollo() -> dict:
     max_per_day = daily_cap()
     seq_id = current_seq_id()
     older_seq = older_seq_id()
+    legacy = db.legacy_sequence_ids()
+    if str(seq_id) in legacy or (older_seq and str(older_seq) in legacy):
+        raise RuntimeError(f"sequência configurada ({seq_id}) é do workspace antigo; "
+                           "ajuste source_state.apollo_seq_id")
+    assert_workspace()
     mailbox_id = resolve_mailbox_id()
 
     # Teto diário real: desconta o que já entrou em sequência hoje (rodada dupla)
@@ -308,16 +417,23 @@ def push_to_apollo() -> dict:
     contacts = select_for_today(all_ready, db.pushed_today_by_company(), budget)
 
     pushed = 0
+    skipped_dupes = 0
     pushed_contacts = []
     for c in contacts:
         company = c.get("companies") or {}
         try:
+            # Dedupe: quem já recebeu qualquer email (sequências antigas, Gmail manual) nunca
+            # recebe o 1º email de novo. A continuação de quem estava no meio da cadência é
+            # feita à parte (continuation.py), nunca por aqui.
+            prior = db.prior_email_contact(c)
+            if prior:
+                db.update_contact(c["id"], status="already_contacted")
+                skipped_dupes += 1
+                log("push_to_apollo", f"pulado (já recebeu email: {prior}): {c['email']}")
+                continue
             # Idempotente: se uma rodada anterior criou o contato mas falhou depois,
-            # reaproveita o apollo_id em vez de criar duplicata no Apollo.
-            apollo_id = c.get("apollo_id")
-            if not apollo_id:
-                apollo_id = create_contact(c, company)
-                db.update_contact(c["id"], apollo_id=apollo_id)
+            # reaproveita o id do workspace da CertiK em vez de criar duplicata.
+            apollo_id = ensure_contact(c, company)
             seq = seq_for(company, seq_id, older_seq)
             add_to_sequence(apollo_id, seq, mailbox_id)
             db.update_contact(c["id"], status="in_sequence")
@@ -325,12 +441,18 @@ def push_to_apollo() -> dict:
             pushed += 1
             pushed_contacts.append({**c, "_company_name": company.get("name")})
             time.sleep(1)  # educação com a API (80 chamadas em rajada = risco de 429)
+        except (EmailMismatch, EnrollSkipped) as e:
+            # Não tenta de novo todo dia: fica para o Lucas revisar.
+            db.update_contact(c["id"], status="review")
+            log("push_to_apollo", f"para revisão {c['email']}: {e}")
+            db.log_run("push_to_apollo", False, f"review {c['email']}: {e}")
         except Exception as e:  # noqa: BLE001
             log("push_to_apollo", f"ERRO em {c['email']}: {e}")
             db.log_run("push_to_apollo", False, f"{c['email']}: {e}")
 
-    waiting = len(all_ready) - pushed
+    waiting = len(all_ready) - pushed - skipped_dupes
     detail = (f"{pushed}/{len(contacts)} contatos enviados à sequência"
+              + (f"; {skipped_dupes} pulados por já terem recebido email" if skipped_dupes else "")
               + (f"; {waiting} esperam os próximos dias (até {PER_COMPANY_PER_DAY} por empresa/dia)"
                  if waiting else ""))
     log("push_to_apollo", detail)
@@ -339,19 +461,22 @@ def push_to_apollo() -> dict:
     from notify import notify_pushed
 
     notify_pushed(pushed_contacts)
-    return {"pushed": pushed, "candidates": len(contacts)}
+    return {"pushed": pushed, "candidates": len(contacts), "skipped_dupes": skipped_dupes}
 
 
 def sync_status() -> dict:
-    """Etapa 4: Apollo → contacts/outreach (replied / bounced / finished)."""
-    seq_ids = ({str(s) for s in db.outreach_sequence_ids()} | {str(current_seq_id())}
-               | ({older_seq_id()} if older_seq_id() else set()))
+    """Etapa 4: Apollo → contacts/outreach (replied / bounced / finished).
+
+    Só olha o workspace atual: contatos pelo apollo_contact_id_certik e sequências que não são
+    do workspace antigo. Cada atualização em outreach vai para a linha da sequência de onde o
+    status veio (um contato migrado tem a linha antiga e a da continuação)."""
+    seq_ids = active_seq_ids()
     in_seq = db.contacts_by_status("in_sequence")
     if not in_seq:
         db.log_run("sync_status", True, "nenhum contato in_sequence")
         return {"updated": 0}
 
-    by_apollo_id = {c["apollo_id"]: c for c in in_seq if c.get("apollo_id")}
+    by_apollo_id = {c[CONTACT_ID_COL]: c for c in in_seq if c.get(CONTACT_ID_COL)}
     now = datetime.now(timezone.utc).isoformat()
     updated = 0
     replies, bounces, finished_list, followups = [], [], [], []
@@ -359,23 +484,29 @@ def sync_status() -> dict:
     def _label(c: dict) -> str:
         return f"{c.get('first_name') or '?'} {c.get('last_name') or ''} <{c['email']}>"
 
-    for remote in search_contacts(list(by_apollo_id.keys())):
+    ids = list(by_apollo_id.keys())
+    remotes = []
+    for i in range(0, len(ids), 100):  # /contacts/search devolve no máximo 100 por página
+        remotes.extend(search_contacts(ids[i:i + 100]))
+
+    for remote in remotes:
         local = by_apollo_id.get(remote.get("id"))
         if not local:
             continue
         for entry in remote.get("contact_campaign_statuses", []):
-            if str(entry.get("emailer_campaign_id")) not in seq_ids:
+            sid = str(entry.get("emailer_campaign_id"))
+            if sid not in seq_ids:
                 continue
 
             # Follow-up: o step atual avançou desde o último sync (shape tolerante)
             step = entry.get("current_step") or entry.get("current_step_number") \
                 or entry.get("step")
             if isinstance(step, int):
-                prev = db.get_outreach_step(local["id"])
+                prev = db.get_outreach_step(local["id"], sid)
                 if prev is not None and step > prev:
                     followups.append(_label(local))
-                    db.update_outreach_by_contact(local["id"], last_step=step,
-                                                  followup_at=now)
+                    db.update_outreach_by_contact(local["id"], sequence_id=sid,
+                                                  last_step=step, followup_at=now)
 
             new_status = interpret_campaign_status(entry)
             if not new_status:
@@ -386,7 +517,7 @@ def sync_status() -> dict:
                 "bounced": {"bounced": True},
                 "finished": {"finished_at": now},
             }[new_status]
-            db.update_outreach_by_contact(local["id"], **outreach_fields)
+            db.update_outreach_by_contact(local["id"], sequence_id=sid, **outreach_fields)
             {"replied": replies, "bounced": bounces,
              "finished": finished_list}[new_status].append(_label(local))
             updated += 1
@@ -394,25 +525,26 @@ def sync_status() -> dict:
     # Fonte confiável de bounce/resposta: as mensagens da sequência. Corrige também
     # contatos que o passo acima marcou como "finished" mas que, na verdade,
     # deram bounce ou responderam.
-    outcomes: dict[str, str] = {}
+    outcomes: dict[str, tuple[str, str]] = {}
     for sid in sorted(seq_ids):
         try:
             for cid, outcome in outcomes_by_contact(search_sequence_messages(sid)).items():
                 if outcome == "bounced" or cid not in outcomes:
-                    outcomes[cid] = outcome
+                    outcomes[cid] = (outcome, sid)
         except Exception as e:  # noqa: BLE001
             log("sync_status", f"falha ao ler mensagens da sequência {sid}: {e}")
             db.log_run("sync_status", False, f"emailer_messages/search {sid}: {e}")
     if outcomes:
         candidates = db.contacts_by_status("in_sequence") + db.contacts_by_status("finished")
         for local in candidates:
-            outcome = outcomes.get(local.get("apollo_id") or "")
+            outcome, sid = outcomes.get(local.get(CONTACT_ID_COL) or "", (None, None))
             if not outcome or local.get("status") == outcome:
                 continue
             db.update_contact(local["id"], status=outcome,
                               stage="do_not_contact" if outcome == "bounced" else "replied")
             db.update_outreach_by_contact(
-                local["id"], **({"bounced": True} if outcome == "bounced" else {"replied_at": now})
+                local["id"], sequence_id=sid,
+                **({"bounced": True} if outcome == "bounced" else {"replied_at": now})
             )
             (bounces if outcome == "bounced" else replies).append(_label(local))
             updated += 1

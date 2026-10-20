@@ -7,12 +7,12 @@ empresas deles como no_fit (não voltam pra fila).
 """
 
 import db
-from apollo import delete_contact, remove_from_sequence
+from apollo import CONTACT_ID_COL, active_seq_ids, delete_contact, remove_from_sequence
 from common import env, log
 
 
 def main() -> None:
-    seq_id = env("APOLLO_SEQ_ID")
+    seq_ids = sorted(active_seq_ids())
     stuck = db.contacts_by_status("in_sequence")
 
     targets = [t.strip().lower() for t in
@@ -28,9 +28,11 @@ def main() -> None:
     company_ids = set()
     for c in stuck:
         try:
-            if c.get("apollo_id"):
-                remove_from_sequence(c["apollo_id"], seq_id)
-                delete_contact(c["apollo_id"])
+            # Só o workspace atual: contacts.apollo_id é do workspace antigo e não serve aqui.
+            if c.get(CONTACT_ID_COL):
+                for seq_id in seq_ids:
+                    remove_from_sequence(c[CONTACT_ID_COL], seq_id)
+                delete_contact(c[CONTACT_ID_COL])
             db.client().table("outreach").delete().eq("contact_id", c["id"]).execute()
             db.client().table("contacts").delete().eq("id", c["id"]).execute()
             company_ids.add(c.get("company_id"))
