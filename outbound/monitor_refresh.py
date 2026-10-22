@@ -83,6 +83,14 @@ def mailbox_summary(accounts: list[dict], mailbox_id: str | None) -> dict:
     }
 
 
+def _stat(v, cast=int):
+    """O Apollo devolve "loading" nas estatísticas enquanto recalcula; vira 0 em vez de quebrar."""
+    try:
+        return cast(v or 0)
+    except (TypeError, ValueError):
+        return cast(0)
+
+
 def sequence_summary(c: dict) -> dict:
     return {
         "id": str(c.get("id")),
@@ -90,12 +98,12 @@ def sequence_summary(c: dict) -> dict:
         "active": bool(c.get("active")),
         "archived": bool(c.get("archived")),
         "num_steps": c.get("num_steps"),
-        "scheduled": c.get("unique_scheduled") or 0,
-        "delivered": c.get("unique_delivered") or 0,
-        "bounced": c.get("unique_bounced") or 0,
-        "replied": c.get("unique_replied") or 0,
-        "opened": c.get("unique_opened") or 0,
-        "bounce_rate": round(float(c.get("bounce_rate") or 0), 4),
+        "scheduled": _stat(c.get("unique_scheduled")),
+        "delivered": _stat(c.get("unique_delivered")),
+        "bounced": _stat(c.get("unique_bounced")),
+        "replied": _stat(c.get("unique_replied")),
+        "opened": _stat(c.get("unique_opened")),
+        "bounce_rate": round(_stat(c.get("bounce_rate"), float), 4),
         "excluded_stages": len(c.get("excluded_account_stage_ids") or [])
                            + len(c.get("excluded_contact_stage_ids") or []),
     }
